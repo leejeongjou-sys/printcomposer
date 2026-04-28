@@ -213,7 +213,7 @@ const composeView = async ({
 }) => {
   const chestNum = Number(chestCm);
 
-  const itemBlocks = items.map((item, i) => {
+  const placementsSpec = items.map((item, i) => {
     const idx = i + 1;
     const { placement, printType, visibility } = item;
     const typeInfo = PRINT_TYPES.find(t => t.value === printType);
@@ -222,39 +222,72 @@ const composeView = async ({
     const xLabel = OFFSET_X_BY_SIDE[placement.side]?.find(o => o.value === placement.offsetX)?.label || '';
     const widthNum = Number(placement.widthCm);
     const ratioPct = chestNum > 0 ? Math.round((widthNum / chestNum) * 100) : null;
-    const xExtra = (placement.side === 'front' && placement.offsetX === 'left') ? ' (착용자 기준 왼쪽 가슴 = 보는 사람 기준 오른쪽, 좌측 가슴 로고 위치)'
-                 : (placement.side === 'front' && placement.offsetX === 'right') ? ' (착용자 기준 오른쪽 가슴)' : '';
 
-    if (visibility === 'partial') {
-      // 소매 측면 프린트가 정면/후면 시점에서 살짝 비치는 경우
-      return `${idx}) ${sideLabel} (소매 바깥쪽 측면) — [프린트 이미지 #${idx}]
-   - 이 프린트는 소매 중앙(바깥쪽 측면)에 있어서 이 시점에서는 소매 가장자리(실루엣 끝쪽)에 일부만 살짝 비쳐 보여야 합니다 (전체가 아니라 끝부분 약 20-30% 정도만 노출).
-   - 가로 실측: ${widthNum}cm (소매 바깥쪽 기준), 재질: ${typeInfo?.label}
-   - 의도: "이 소매에 그래픽이 있다는 힌트"가 보이도록 — 절대 정면을 향해 평평하게 보여주지 마세요.`;
-    }
+    const orientationNote =
+      placement.side === 'front' && placement.offsetX === 'left' ? '착용자 기준 왼쪽 가슴 = 보는 사람 기준 오른쪽 (좌측 가슴 로고 자리)' :
+      placement.side === 'front' && placement.offsetX === 'right' ? '착용자 기준 오른쪽 가슴 = 보는 사람 기준 왼쪽' :
+      null;
 
-    return `${idx}) ${sideLabel} - ${yLabel}${xLabel ? ', ' + xLabel : ''}${xExtra}
-   - 사용할 프린트: [프린트 이미지 #${idx}]
-   - 가로 실측: ${widthNum}cm${ratioPct ? ` (의류 가슴폭 ${chestNum}cm의 ${ratioPct}%)` : ''}
-   - 재질: ${typeInfo?.label} — ${typeInfo?.desc}`;
-  }).join('\n\n');
+    return {
+      index: idx,
+      image_ref: `프린트 이미지 #${idx}`,
+      side: placement.side,
+      side_label: sideLabel,
+      position: {
+        vertical: placement.offsetY,
+        vertical_label: yLabel,
+        horizontal: placement.offsetX,
+        horizontal_label: xLabel,
+        ...(orientationNote ? { orientation_note: orientationNote } : {}),
+      },
+      size: {
+        width_cm: widthNum,
+        ...(ratioPct ? { width_ratio_to_chest_pct: ratioPct } : {}),
+      },
+      print: {
+        type_key: printType,
+        type_label: typeInfo?.label,
+        visual_traits: typeInfo?.desc,
+      },
+      visibility,
+      rendering_note:
+        visibility === 'partial'
+          ? '이 프린트는 소매 바깥쪽(측면)에 위치하므로 이 시점에서는 소매 실루엣 끝쪽에 약 20-30%만 살짝 비쳐 보여야 함. 절대 정면을 향해 평평하게 전체를 노출하지 말 것. 의도는 "이 소매에 그래픽이 있다는 힌트"를 주는 것.'
+          : '명시된 크기 비율과 위치를 정확히 지켜 정면으로 또렷이 합성',
+    };
+  });
 
-  const hasPartial = items.some(it => it.visibility === 'partial');
-  const prompt = `[제품 이미지] 다음에 ${items.length}개의 [프린트 이미지 #N]가 순서대로 옵니다.
+  const spec = {
+    product: {
+      chest_cm: chestNum,
+      length_cm: Number(lengthCm),
+    },
+    view: {
+      key: viewLabel,
+      instruction: viewInstruction,
+      output_aspect_ratio: '1:1',
+    },
+    placements: placementsSpec,
+    must_preserve: ['실루엣', '색상', '배경', '조명'],
+    must_apply: [
+      '원단의 주름·음영·결이 프린트 위에 자연스럽게 반영되어야 함',
+      '각 placement의 size.width_ratio_to_chest_pct 값을 픽셀 단위로 정확히 반영',
+      '화질은 최대한 선명하게, 디테일 보존',
+    ],
+  };
 
-제품 실측: 가슴단면 ${chestCm}cm, 총장 ${lengthCm}cm
+  const prompt = `다음 JSON 명세에 따라 [제품 이미지]에 ${items.length}개의 [프린트 이미지 #1]~[프린트 이미지 #${items.length}]를 합성하세요.
 
-배치:
-${itemBlocks}
+\`\`\`json
+${JSON.stringify(spec, null, 2)}
+\`\`\`
 
-결과 조건:
-- 시점: ${viewInstruction}
-- 출력 비율은 정확히 1:1 정사각형
-- 정면으로 보이는 프린트는 명시된 크기 비율을 정확히 지킬 것
-${hasPartial ? '- 소매에 있는 프린트는 시점상 측면에 있으므로 가장자리에 일부만 살짝 비쳐야 함 (전체 노출 금지)' : ''}
-- 원단의 주름, 음영, 결을 프린트 위에 자연스럽게 반영
-- 제품 자체(실루엣, 색상, 배경, 조명)는 절대 수정 금지
-- 화질을 최대한 선명하게, 디테일이 살아있도록`;
+해석 규칙:
+1. \`placements\` 배열을 순서대로 적용. 각 항목의 \`image_ref\`가 가리키는 프린트 이미지를 그 \`side\`/\`position\`에 배치.
+2. \`size.width_ratio_to_chest_pct\`는 의류 가슴 단면 폭 대비 프린트 가로 폭의 % — 픽셀로 측정해서 정확히 일치시킬 것 (임의로 키우거나 줄이지 말 것).
+3. \`visibility="partial"\`인 placement는 반드시 \`rendering_note\`의 지시를 따를 것.
+4. \`must_preserve\` 항목은 절대 수정 금지.
+5. 결과 이미지 비율은 \`view.output_aspect_ratio\` (1:1 정사각형).`;
 
   const parts = [
     { text: prompt },
