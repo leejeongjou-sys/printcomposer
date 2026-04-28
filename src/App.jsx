@@ -68,32 +68,23 @@ const OFFSET_X_BY_SIDE = {
   right_sleeve: [{ value: 'center', label: '소매 중앙' }],
 };
 
-// 결과 view: 각 view는 그 면에 직접 배치된 프린트만 보임
-// (소매 측면 프린트는 정면/후면에서 보이지 않음 — 각 view는 그 시점에서 자연스럽게 보이는 것만)
+// 결과 view 정의 — 정면/후면 2개만 생성
+// primary: 그 시점에서 정면으로 또렷이 보이는 면
+// partial: 그 시점에서 소매 가장자리에 살짝만 비치는 면 (소매 중앙 프린트가 살짝 옆으로 비침)
 const VIEWS = [
   {
     key: 'front_view',
     label: '정면',
-    includes: ['front'],
+    primaryIncludes: ['front'],
+    partialIncludes: ['left_sleeve', 'right_sleeve'],
     viewInstruction: '의류의 정면이 보이는 시점. 앞면 가슴이 정면에서 보이는 컷.',
   },
   {
     key: 'back_view',
     label: '후면',
-    includes: ['back'],
+    primaryIncludes: ['back'],
+    partialIncludes: ['left_sleeve', 'right_sleeve'],
     viewInstruction: '의류의 뒷면이 보이는 시점. 등판이 정면에서 보이는 후면 컷.',
-  },
-  {
-    key: 'left_view',
-    label: '좌측면',
-    includes: ['left_sleeve'],
-    viewInstruction: '의류의 왼쪽 측면이 보이는 시점. 왼팔 소매의 바깥쪽(측면)이 카메라를 향한 사이드 뷰.',
-  },
-  {
-    key: 'right_view',
-    label: '우측면',
-    includes: ['right_sleeve'],
-    viewInstruction: '의류의 오른쪽 측면이 보이는 시점. 오른팔 소매의 바깥쪽(측면)이 카메라를 향한 사이드 뷰.',
   },
 ];
 
@@ -224,7 +215,7 @@ const composeView = async ({
 
   const itemBlocks = items.map((item, i) => {
     const idx = i + 1;
-    const { placement, printType } = item;
+    const { placement, printType, visibility } = item;
     const typeInfo = PRINT_TYPES.find(t => t.value === printType);
     const sideLabel = SIDES.find(s => s.key === placement.side)?.label || placement.side;
     const yLabel = OFFSET_Y_BY_SIDE[placement.side]?.find(o => o.value === placement.offsetY)?.label || '';
@@ -233,13 +224,22 @@ const composeView = async ({
     const ratioPct = chestNum > 0 ? Math.round((widthNum / chestNum) * 100) : null;
     const xExtra = (placement.side === 'front' && placement.offsetX === 'left') ? ' (착용자 기준 왼쪽 가슴 = 보는 사람 기준 오른쪽, 좌측 가슴 로고 위치)'
                  : (placement.side === 'front' && placement.offsetX === 'right') ? ' (착용자 기준 오른쪽 가슴)' : '';
+
+    if (visibility === 'partial') {
+      // 소매 측면 프린트가 정면/후면 시점에서 살짝 비치는 경우
+      return `${idx}) ${sideLabel} (소매 바깥쪽 측면) — [프린트 이미지 #${idx}]
+   - 이 프린트는 소매 중앙(바깥쪽 측면)에 있어서 이 시점에서는 소매 가장자리(실루엣 끝쪽)에 일부만 살짝 비쳐 보여야 합니다 (전체가 아니라 끝부분 약 20-30% 정도만 노출).
+   - 가로 실측: ${widthNum}cm (소매 바깥쪽 기준), 재질: ${typeInfo?.label}
+   - 의도: "이 소매에 그래픽이 있다는 힌트"가 보이도록 — 절대 정면을 향해 평평하게 보여주지 마세요.`;
+    }
+
     return `${idx}) ${sideLabel} - ${yLabel}${xLabel ? ', ' + xLabel : ''}${xExtra}
    - 사용할 프린트: [프린트 이미지 #${idx}]
    - 가로 실측: ${widthNum}cm${ratioPct ? ` (의류 가슴폭 ${chestNum}cm의 ${ratioPct}%)` : ''}
    - 재질: ${typeInfo?.label} — ${typeInfo?.desc}`;
   }).join('\n\n');
 
-  const isMulti = items.length > 1;
+  const hasPartial = items.some(it => it.visibility === 'partial');
   const prompt = `[제품 이미지] 다음에 ${items.length}개의 [프린트 이미지 #N]가 순서대로 옵니다.
 
 제품 실측: 가슴단면 ${chestCm}cm, 총장 ${lengthCm}cm
@@ -249,9 +249,9 @@ ${itemBlocks}
 
 결과 조건:
 - 시점: ${viewInstruction}
-- ${isMulti ? `${viewLabel}에서 자연스럽게 보이는 모든 프린트가 같은 한 장의 사진에 함께 합성되어야 함` : `${viewLabel}에서 보이는 프린트만 자연스럽게 합성`}
 - 출력 비율은 정확히 1:1 정사각형
-- 각 프린트의 크기는 위 비율을 정확히 지킬 것 (임의로 키우거나 줄이지 마세요)
+- 정면으로 보이는 프린트는 명시된 크기 비율을 정확히 지킬 것
+${hasPartial ? '- 소매에 있는 프린트는 시점상 측면에 있으므로 가장자리에 일부만 살짝 비쳐야 함 (전체 노출 금지)' : ''}
 - 원단의 주름, 음영, 결을 프린트 위에 자연스럽게 반영
 - 제품 자체(실루엣, 색상, 배경, 조명)는 절대 수정 금지
 - 화질을 최대한 선명하게, 디테일이 살아있도록`;
@@ -395,15 +395,17 @@ export default function App() {
       if (!print.analysis) return showNotification('아직 분석 중인 프린트가 있습니다', 'error');
     }
 
-    // view별로 그 시점에서 보이는 placement들을 묶기
+    // view별로 그 시점에서 보이는 placement들을 묶기 (primary + partial)
     const viewJobs = [];
     for (const view of VIEWS) {
       const items = placements
-        .filter(pl => view.includes.includes(pl.side))
+        .filter(pl => view.primaryIncludes.includes(pl.side) || view.partialIncludes.includes(pl.side))
         .map(pl => {
           const print = prints.find(p => p.id === pl.printId);
-          return { placement: pl, printImage: print.image, printType: print.analysis.type };
+          const visibility = view.primaryIncludes.includes(pl.side) ? 'full' : 'partial';
+          return { placement: pl, printImage: print.image, printType: print.analysis.type, visibility };
         });
+      // 어떤 형태로든 placement가 보이면 view 생성 (소매만 있어도 partial로 표시)
       if (items.length > 0) viewJobs.push({ view, items });
     }
     if (viewJobs.length === 0) return showNotification('합성할 view가 없습니다', 'error');
@@ -691,36 +693,36 @@ export default function App() {
             )}
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3">
             {VIEWS.map(view => {
               const r = results[view.key];
               return (
                 <div key={view.key} className="aspect-square bg-white border border-gray-200 flex flex-col relative overflow-hidden">
                   {!r ? (
                     <div className="flex-1 flex flex-col items-center justify-center text-gray-300">
-                      <LucideShirt className="w-8 h-8 mb-1" />
-                      <span className="text-[11px] font-bold uppercase tracking-wider">{view.label}</span>
+                      <LucideShirt className="w-10 h-10 mb-1" />
+                      <span className="text-xs font-bold uppercase tracking-wider">{view.label}</span>
                     </div>
                   ) : r.status === 'pending' ? (
                     <div className="flex-1 flex flex-col items-center justify-center text-gray-500">
-                      <LucideLoader2 className="w-6 h-6 animate-spin mb-1" />
-                      <span className="text-[11px] font-bold uppercase tracking-wider">{view.label}</span>
+                      <LucideLoader2 className="w-7 h-7 animate-spin mb-1" />
+                      <span className="text-xs font-bold uppercase tracking-wider">{view.label}</span>
                     </div>
                   ) : r.status === 'error' ? (
                     <div className="flex-1 flex flex-col items-center justify-center text-red-500 px-2 text-center">
-                      <LucideXCircle className="w-6 h-6 mb-1" />
-                      <span className="text-[11px] font-bold uppercase tracking-wider mb-1">{view.label}</span>
-                      <span className="text-[9px] text-red-400 leading-tight">{r.error}</span>
+                      <LucideXCircle className="w-7 h-7 mb-1" />
+                      <span className="text-xs font-bold uppercase tracking-wider mb-1">{view.label}</span>
+                      <span className="text-[10px] text-red-400 leading-tight">{r.error}</span>
                     </div>
                   ) : (
                     <>
                       <img src={r.dataUrl} alt={view.label} className="w-full h-full object-contain" />
-                      <div className="absolute top-1 left-1 bg-black text-white text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5">
+                      <div className="absolute top-1.5 left-1.5 bg-black text-white text-[10px] font-bold uppercase tracking-wider px-2 py-0.5">
                         {view.label}
                       </div>
                       <button onClick={() => downloadResult(view.key, r.dataUrl)}
-                        className="absolute bottom-1 right-1 bg-black text-white p-1 hover:bg-gray-800">
-                        <LucideDownload className="w-3.5 h-3.5" />
+                        className="absolute bottom-1.5 right-1.5 bg-black text-white p-1.5 hover:bg-gray-800">
+                        <LucideDownload className="w-4 h-4" />
                       </button>
                     </>
                   )}
