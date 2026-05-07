@@ -134,21 +134,26 @@ const compressImage = (dataUrl, maxWidth = 2048, quality = 0.92) => new Promise(
   img.src = dataUrl;
 });
 
-// 1:1 정사각형으로 패딩 (흰 배경) + 고화질 압축
-const squareCompressImage = (dataUrl, size = 2048, quality = 0.92) => new Promise((resolve, reject) => {
+// 3:4 비율 + 좌우 5% 여백으로 패딩 (흰 배경) + 고화질 압축
+// 제품 누끼 입력용 — 출력될 합성 이미지의 캔버스 비율을 미리 잡아둠
+const padTo34Image = (dataUrl, maxHeight = 2400, sideMarginPct = 5, quality = 0.92) => new Promise((resolve, reject) => {
   const img = new Image();
   img.onload = () => {
-    const out = Math.min(size, Math.max(img.width, img.height));
+    const targetH = Math.min(maxHeight, Math.max(img.width, img.height));
+    const targetW = Math.round(targetH * 3 / 4);
     const canvas = document.createElement('canvas');
-    canvas.width = out; canvas.height = out;
+    canvas.width = targetW; canvas.height = targetH;
     const ctx = canvas.getContext('2d');
     ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, out, out);
+    ctx.fillRect(0, 0, targetW, targetH);
     ctx.imageSmoothingQuality = 'high';
-    const scale = Math.min(out / img.width, out / img.height);
+    // 좌우 sideMarginPct% 여백 — 그 안쪽 영역에 제품을 가운데 정렬
+    const innerW = targetW * (1 - (sideMarginPct * 2) / 100);
+    const innerH = targetH;
+    const scale = Math.min(innerW / img.width, innerH / img.height);
     const w = img.width * scale;
     const h = img.height * scale;
-    ctx.drawImage(img, (out - w) / 2, (out - h) / 2, w, h);
+    ctx.drawImage(img, (targetW - w) / 2, (targetH - h) / 2, w, h);
     resolve(canvas.toDataURL('image/jpeg', quality));
   };
   img.onerror = reject;
@@ -158,12 +163,18 @@ const squareCompressImage = (dataUrl, size = 2048, quality = 0.92) => new Promis
 const stripBase64 = (dataUrl) => dataUrl.split(',')[1];
 
 // ==================== GEMINI API ====================
-const callGemini = async ({ apiKey, parts, expectImage }) => {
+const callGemini = async ({ apiKey, parts, expectImage, imageConfig }) => {
   if (!apiKey) throw new Error('API Key가 설정되지 않았습니다');
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_ID}:generateContent?key=${apiKey}`;
+  const generationConfig = {
+    responseModalities: expectImage ? ['TEXT', 'IMAGE'] : ['TEXT']
+  };
+  if (expectImage && imageConfig) {
+    generationConfig.imageConfig = imageConfig;
+  }
   const body = {
     contents: [{ role: 'user', parts }],
-    generationConfig: { responseModalities: expectImage ? ['TEXT', 'IMAGE'] : ['TEXT'] }
+    generationConfig
   };
   const res = await fetchWithRetry(url, {
     method: 'POST',
@@ -260,6 +271,10 @@ const composeView = async ({
   });
 
   const spec = {
+    input_format: {
+      product_image: '흰 배경의 제품 누끼(배경 제거된 컷). 3:4 비율로 패딩되어 있고 좌우 5% 여백이 이미 적용되어 있음.',
+      print_images: '실제 제작된 프린트의 클로즈업 사진. 각 프린트의 색상/형태/질감/잉크 두께/실 결이 그대로 보임.',
+    },
     product: {
       chest_cm: chestNum,
       length_cm: Number(lengthCm),
@@ -267,14 +282,20 @@ const composeView = async ({
     view: {
       key: viewLabel,
       instruction: viewInstruction,
-      output_aspect_ratio: '1:1',
     },
     placements: placementsSpec,
-    must_preserve: ['실루엣', '색상', '배경', '조명'],
+    output: {
+      aspect_ratio: '3:4',
+      horizontal_margin_pct: 5,
+      resolution: '4K',
+      composition: '제품은 가로 폭의 90%를 차지(좌우 5%씩 흰 여백). 세로는 제품 전체가 자연스럽게 들어가도록.',
+    },
+    must_preserve: ['제품의 실루엣', '제품 원래 색상', '흰 배경', '조명', '제품의 형태'],
     must_apply: [
-      '원단의 주름·음영·결이 프린트 위에 자연스럽게 반영되어야 함',
+      '프린트는 [프린트 이미지 #N]에 보이는 색상/형태/질감/잉크특성을 그대로 옮길 것 (재해석/재생성/스타일화 금지)',
+      '원단의 주름·음영·결이 프린트 위에 자연스럽게 반영',
       '각 placement의 size.width_ratio_to_chest_pct 값을 픽셀 단위로 정확히 반영',
-      '화질은 최대한 선명하게, 디테일 보존',
+      '4K 화질, 디테일과 텍스처가 살아있도록',
     ],
     ...(extraPrompt && extraPrompt.trim() ? { user_extra_instructions: extraPrompt.trim() } : {}),
   };
@@ -286,11 +307,11 @@ ${JSON.stringify(spec, null, 2)}
 \`\`\`
 
 해석 규칙:
-1. \`placements\` 배열을 순서대로 적용. 각 항목의 \`image_ref\`가 가리키는 프린트 이미지를 그 \`side\`/\`position\`에 배치.
+1. \`placements\` 배열을 순서대로 적용. 각 항목의 \`image_ref\`가 가리키는 [프린트 이미지 #N]은 실제 프린트의 클로즈업이므로 그 시각적 특성(색상/형태/질감/잉크 두께/실 결)을 절대 변형하지 말고 그대로 옮길 것.
 2. \`size.width_ratio_to_chest_pct\`는 의류 가슴 단면 폭 대비 프린트 가로 폭의 % — 픽셀로 측정해서 정확히 일치시킬 것 (임의로 키우거나 줄이지 말 것).
 3. \`visibility="partial"\`인 placement는 반드시 \`rendering_note\`의 지시를 따를 것.
 4. \`must_preserve\` 항목은 절대 수정 금지.
-5. 결과 이미지 비율은 \`view.output_aspect_ratio\` (1:1 정사각형).
+5. 결과 이미지: \`output.aspect_ratio\` (3:4), \`output.horizontal_margin_pct\` (좌우 5% 흰 여백), \`output.resolution\` (4K).
 6. \`user_extra_instructions\`가 있다면 사용자가 직접 추가한 디테일 요구사항이므로, 위 규칙과 충돌하지 않는 한 우선적으로 반영할 것 (특히 크기·위치 미세조정).`;
 
   const parts = [
@@ -299,7 +320,12 @@ ${JSON.stringify(spec, null, 2)}
     ...items.map(item => ({ inlineData: { mimeType: 'image/jpeg', data: stripBase64(item.printImage) } })),
   ];
 
-  const data = await callGemini({ apiKey, parts, expectImage: true });
+  const data = await callGemini({
+    apiKey,
+    parts,
+    expectImage: true,
+    imageConfig: { aspectRatio: '3:4', imageSize: '4K' },
+  });
   const imgPart = data?.candidates?.[0]?.content?.parts?.find(p => p.inlineData?.data);
   if (imgPart?.inlineData?.data) return `data:image/jpeg;base64,${imgPart.inlineData.data}`;
   const txtPart = data?.candidates?.[0]?.content?.parts?.find(p => p.text)?.text;
@@ -307,12 +333,14 @@ ${JSON.stringify(spec, null, 2)}
 };
 
 // ==================== UI HELPERS ====================
-const ImageDropZone = ({ value, onChange, label, icon: Icon, height = 'aspect-square', square = false }) => {
+const ImageDropZone = ({ value, onChange, label, icon: Icon, height = 'aspect-square', padMode = null }) => {
   const inputRef = useRef(null);
   const handleFile = async (file) => {
     if (!file) return;
     const dataUrl = await fileToDataUrl(file);
-    const processed = square ? await squareCompressImage(dataUrl) : await compressImage(dataUrl);
+    let processed;
+    if (padMode === '3:4') processed = await padTo34Image(dataUrl);
+    else processed = await compressImage(dataUrl);
     onChange(processed);
   };
   return (
@@ -348,15 +376,14 @@ const ImageDropZone = ({ value, onChange, label, icon: Icon, height = 'aspect-sq
 // ==================== DETAIL PAGE ====================
 const DETAIL_PAGE_DEFAULTS = {
   title: '',
+  productName: '',
   category: '맨투맨',
   printType: '실크스크린',
   color: '차콜',
   date: new Date().toISOString().slice(0, 10).replace(/-/g, '.'),
-  no: 'No.0001',
-  views: '조회 0',
 };
 
-// 5개 슬롯: 01 전체앞 / 02 전체뒤 / 03 프린트 클로즈업 / 04 디테일1 / 05 디테일2
+// 5개 슬롯: 01 전체앞(3:4) / 02 전체뒤(3:4) / 03 프린트 클로즈업(3:2) / 04 디테일1(1:1) / 05 디테일2(1:1)
 const DetailPage = ({ meta, shots }) => (
   <div id="detail-capture" style={{ width: 1000, background: '#ffffff', fontFamily: "'Inter','Noto Sans KR',system-ui,sans-serif", color: '#0a0a0a' }}>
     {/* HERO */}
@@ -371,28 +398,28 @@ const DetailPage = ({ meta, shots }) => (
         <span>주문제작</span>
         <span style={{ width: 3, height: 3, background: '#8a8a8a', borderRadius: '50%', alignSelf: 'center' }} />
         <span>{meta.date}</span>
-        <span style={{ width: 3, height: 3, background: '#8a8a8a', borderRadius: '50%', alignSelf: 'center' }} />
-        <span>{meta.no}</span>
-        <span style={{ width: 3, height: 3, background: '#8a8a8a', borderRadius: '50%', alignSelf: 'center' }} />
-        <span>{meta.views}</span>
+        {meta.productName && <>
+          <span style={{ width: 3, height: 3, background: '#8a8a8a', borderRadius: '50%', alignSelf: 'center' }} />
+          <span>{meta.productName}</span>
+        </>}
       </div>
     </section>
 
     {/* PHOTOS */}
     <section style={{ padding: '24px 56px 0' }}>
       {[
-        { num: '01', label: '전체컷 · 앞', src: shots.shot01, wide: false },
-        { num: '02', label: '전체컷 · 뒤', src: shots.shot02, wide: false },
-        { num: '03', label: '프린트 · 클로즈업', src: shots.shot03, wide: true },
-        { num: '04', label: '디테일 · 네크라인', src: shots.shot04, wide: false },
-        { num: '05', label: '디테일 · 라벨', src: shots.shot05, wide: false },
+        { num: '01', label: '전체컷 · 앞', src: shots.shot01, aspect: '3/4' },
+        { num: '02', label: '전체컷 · 뒤', src: shots.shot02, aspect: '3/4' },
+        { num: '03', label: '프린트 · 클로즈업', src: shots.shot03, aspect: '3/2' },
+        { num: '04', label: '디테일 · 네크라인', src: shots.shot04, aspect: '1/1' },
+        { num: '05', label: '디테일 · 라벨', src: shots.shot05, aspect: '1/1' },
       ].filter(s => s.src).map(s => (
         <div key={s.num} style={{ position: 'relative', borderRadius: 14, overflow: 'hidden', marginBottom: 20, background: '#f6f6f4' }}>
-          <div style={{ aspectRatio: s.wide ? '3/2' : '4/5', width: '100%', position: 'relative', overflow: 'hidden' }}>
+          <div style={{ aspectRatio: s.aspect, width: '100%', position: 'relative', overflow: 'hidden' }}>
             <img src={s.src} alt={s.label} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
           </div>
-          <span style={{ position: 'absolute', top: 18, left: 18, background: 'rgba(255,255,255,0.92)', padding: '7px 12px', borderRadius: 999, fontSize: 11, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', color: '#0a0a0a' }}>{s.label}</span>
-          <span style={{ position: 'absolute', top: 18, right: 18, background: 'rgba(0,0,0,0.55)', width: 34, height: 34, borderRadius: '50%', color: '#fff', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 600 }}>{s.num}</span>
+          <span style={{ position: 'absolute', top: 22, left: 22, background: 'rgba(255,255,255,0.92)', padding: '10px 18px', borderRadius: 999, fontSize: 17, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', color: '#0a0a0a' }}>{s.label}</span>
+          <span style={{ position: 'absolute', top: 22, right: 22, background: 'rgba(0,0,0,0.55)', width: 50, height: 50, borderRadius: '50%', color: '#fff', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, fontWeight: 600 }}>{s.num}</span>
         </div>
       ))}
     </section>
@@ -413,8 +440,8 @@ const DetailPage = ({ meta, shots }) => (
           <p style={{ fontSize: 15, fontWeight: 600 }}>{meta.date}</p>
         </div>
         <div>
-          <h5 style={{ fontSize: 11, color: '#8a8a8a', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 8 }}>게시번호</h5>
-          <p style={{ fontSize: 15, fontWeight: 600 }}>{meta.no}</p>
+          <h5 style={{ fontSize: 11, color: '#8a8a8a', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 8 }}>제품명</h5>
+          <p style={{ fontSize: 15, fontWeight: 600 }}>{meta.productName || '-'}</p>
         </div>
       </div>
     </section>
@@ -670,15 +697,15 @@ export default function App() {
 
           <div className="space-y-6">
             <div>
-              <label className="text-[11px] font-bold uppercase tracking-wider mb-2 block">제품컷</label>
+              <label className="text-[11px] font-bold uppercase tracking-wider mb-2 block">제품 누끼</label>
               <ImageDropZone
                 value={productImage}
                 onChange={setProductImage}
-                label="제품 이미지 업로드"
+                label="제품 누끼 업로드 (흰 배경)"
                 icon={LucideUploadCloud}
-                square
+                padMode="3:4"
               />
-              <p className="text-[10px] text-gray-400 mt-1">자동으로 1:1 정사각형으로 변환</p>
+              <p className="text-[10px] text-gray-400 mt-1">3:4 비율 + 좌우 5% 여백 자동 적용 · 누끼/배경 제거된 사진 권장</p>
             </div>
 
             <div>
@@ -1007,7 +1034,7 @@ export default function App() {
                         className="w-full border border-gray-300 px-2 py-1.5 text-xs focus:outline-none focus:border-black" />
                     </div>
                   </div>
-                  <div className="grid grid-cols-3 gap-1.5">
+                  <div className="grid grid-cols-2 gap-1.5">
                     <div>
                       <label className="text-[10px] text-gray-500 block mb-0.5">등록일</label>
                       <input type="text" value={detailMeta.date}
@@ -1015,15 +1042,10 @@ export default function App() {
                         className="w-full border border-gray-300 px-2 py-1.5 text-xs focus:outline-none focus:border-black" />
                     </div>
                     <div>
-                      <label className="text-[10px] text-gray-500 block mb-0.5">게시번호</label>
-                      <input type="text" value={detailMeta.no}
-                        onChange={(e) => setDetailMeta(m => ({ ...m, no: e.target.value }))}
-                        className="w-full border border-gray-300 px-2 py-1.5 text-xs focus:outline-none focus:border-black" />
-                    </div>
-                    <div>
-                      <label className="text-[10px] text-gray-500 block mb-0.5">조회</label>
-                      <input type="text" value={detailMeta.views}
-                        onChange={(e) => setDetailMeta(m => ({ ...m, views: e.target.value }))}
+                      <label className="text-[10px] text-gray-500 block mb-0.5">제품명</label>
+                      <input type="text" value={detailMeta.productName}
+                        onChange={(e) => setDetailMeta(m => ({ ...m, productName: e.target.value }))}
+                        placeholder="예) FP-142"
                         className="w-full border border-gray-300 px-2 py-1.5 text-xs focus:outline-none focus:border-black" />
                     </div>
                   </div>
