@@ -219,16 +219,18 @@ ${PRINT_TYPES.map(t => `- ${t.value}: ${t.label} — ${t.desc}`).join('\n')}
   return parsed;
 };
 
-// items: [{ printImage, printType, placement: { side, widthCm, offsetY, offsetX } }]
+// items: [{ printImages: [...], printType, placement: { side, widthCm, offsetY, offsetX }, visibility }]
 const composeView = async ({
   apiKey, productImageDataUrl, items, chestCm, lengthCm,
   viewLabel, viewInstruction, extraPrompt
 }) => {
   const chestNum = Number(chestCm);
 
+  // 모든 참고 이미지를 글로벌 번호로 매핑
+  let globalIdx = 0;
   const placementsSpec = items.map((item, i) => {
-    const idx = i + 1;
-    const { placement, printType, visibility } = item;
+    const placementIdx = i + 1;
+    const { placement, printType, visibility, printImages } = item;
     const typeInfo = PRINT_TYPES.find(t => t.value === printType);
     const sideLabel = SIDES.find(s => s.key === placement.side)?.label || placement.side;
     const yLabel = OFFSET_Y_BY_SIDE[placement.side]?.find(o => o.value === placement.offsetY)?.label || '';
@@ -241,9 +243,22 @@ const composeView = async ({
       placement.side === 'front' && placement.offsetX === 'right' ? '착용자 기준 오른쪽 가슴 = 보는 사람 기준 왼쪽' :
       null;
 
+    const imageRefs = printImages.map((_, j) => {
+      globalIdx++;
+      return {
+        id: `프린트 이미지 #${globalIdx}`,
+        role: j === 0
+          ? '메인 — 위치/크기/형태의 기본 참고'
+          : `추가 참고 #${j} — 같은 프린트의 다른 시점/거리 (멀리서 또는 가까이서). 질감/디테일/색상 정확도를 위해 종합적으로 활용`,
+      };
+    });
+
     return {
-      index: idx,
-      image_ref: `프린트 이미지 #${idx}`,
+      index: placementIdx,
+      image_refs: imageRefs,
+      image_refs_note: imageRefs.length > 1
+        ? '여러 장은 같은 프린트의 다른 시점 사진. 위치는 메인을 기준으로 하되, 질감·잉크 두께·실 결·미세 색상은 추가 참고 사진에서 보이는 디테일을 최대한 반영할 것.'
+        : '단일 참고 사진.',
       side: placement.side,
       side_label: sideLabel,
       position: {
@@ -269,6 +284,7 @@ const composeView = async ({
           : '명시된 크기 비율과 위치를 정확히 지켜 정면으로 또렷이 합성',
     };
   });
+  const totalRefImages = globalIdx;
 
   const spec = {
     input_format: {
@@ -300,24 +316,26 @@ const composeView = async ({
     ...(extraPrompt && extraPrompt.trim() ? { user_extra_instructions: extraPrompt.trim() } : {}),
   };
 
-  const prompt = `다음 JSON 명세에 따라 [제품 이미지]에 ${items.length}개의 [프린트 이미지 #1]~[프린트 이미지 #${items.length}]를 합성하세요.
+  const prompt = `다음 JSON 명세에 따라 [제품 이미지]에 총 ${totalRefImages}장의 [프린트 이미지 #1]~[프린트 이미지 #${totalRefImages}]를 참고해서 ${items.length}개의 placement를 합성하세요.
 
 \`\`\`json
 ${JSON.stringify(spec, null, 2)}
 \`\`\`
 
 해석 규칙:
-1. \`placements\` 배열을 순서대로 적용. 각 항목의 \`image_ref\`가 가리키는 [프린트 이미지 #N]은 실제 프린트의 클로즈업이므로 그 시각적 특성(색상/형태/질감/잉크 두께/실 결)을 절대 변형하지 말고 그대로 옮길 것.
-2. \`size.width_ratio_to_chest_pct\`는 의류 가슴 단면 폭 대비 프린트 가로 폭의 % — 픽셀로 측정해서 정확히 일치시킬 것 (임의로 키우거나 줄이지 말 것).
-3. \`visibility="partial"\`인 placement는 반드시 \`rendering_note\`의 지시를 따를 것.
-4. \`must_preserve\` 항목은 절대 수정 금지.
-5. 결과 이미지: \`output.aspect_ratio\` (3:4), \`output.horizontal_margin_pct\` (좌우 5% 흰 여백), \`output.resolution\` (4K).
-6. \`user_extra_instructions\`가 있다면 사용자가 직접 추가한 디테일 요구사항이므로, 위 규칙과 충돌하지 않는 한 우선적으로 반영할 것 (특히 크기·위치 미세조정).`;
+1. 각 placement의 \`image_refs\` 배열은 같은 프린트의 여러 참고 사진(메인 + 다른 시점/거리). 위치는 메인을 기준으로 잡되, 질감·잉크 특성·실 결 등 시각 디테일은 모든 참고 사진을 종합해서 정확히 재현할 것.
+2. 어떤 참고 사진의 시각 특성도 절대 변형/재해석하지 말고 그대로 옮길 것.
+3. \`size.width_ratio_to_chest_pct\`는 의류 가슴 단면 폭 대비 프린트 가로 폭의 % — 픽셀로 측정해서 정확히 일치시킬 것 (임의로 키우거나 줄이지 말 것).
+4. \`visibility="partial"\`인 placement는 반드시 \`rendering_note\`의 지시를 따를 것.
+5. \`must_preserve\` 항목은 절대 수정 금지.
+6. 결과 이미지: \`output.aspect_ratio\` (3:4), \`output.horizontal_margin_pct\` (좌우 5% 흰 여백), \`output.resolution\` (4K).
+7. \`user_extra_instructions\`가 있다면 사용자가 직접 추가한 디테일 요구사항이므로, 위 규칙과 충돌하지 않는 한 우선적으로 반영할 것 (특히 크기·위치 미세조정).`;
 
+  const allImages = items.flatMap(item => item.printImages);
   const parts = [
     { text: prompt },
     { inlineData: { mimeType: 'image/jpeg', data: stripBase64(productImageDataUrl) } },
-    ...items.map(item => ({ inlineData: { mimeType: 'image/jpeg', data: stripBase64(item.printImage) } })),
+    ...allImages.map(img => ({ inlineData: { mimeType: 'image/jpeg', data: stripBase64(img) } })),
   ];
 
   const data = await callGemini({
@@ -330,6 +348,36 @@ ${JSON.stringify(spec, null, 2)}
   if (imgPart?.inlineData?.data) return `data:image/jpeg;base64,${imgPart.inlineData.data}`;
   const txtPart = data?.candidates?.[0]?.content?.parts?.find(p => p.text)?.text;
   throw new Error(txtPart || '이미지가 생성되지 않았습니다');
+};
+
+// 프린트 참고 사진 → 매거진 스타일 깔끔한 디테일 클로즈업
+const composeDetail = async ({ apiKey, sourceImage, printType }) => {
+  const typeInfo = PRINT_TYPES.find(t => t.value === printType);
+  const prompt = `다음 [참고 이미지]는 의류에 적용된 프린트의 클로즈업 사진입니다.
+이를 바탕으로 매거진/룩북에 들어갈 수준의 깔끔한 디테일 클로즈업 사진을 새로 생성하세요.
+
+요구사항:
+- 1:1 정사각형 비율, 4K 고화질
+- 흰색 또는 매우 중립적인 원단 배경 (톤이 차분하고 산만하지 않게)
+- 부드러운 자연광 또는 스튜디오 조명, 그림자 최소화
+- 프린트의 텍스처/잉크/실 결에 선명한 초점 (가까이서 디테일이 또렷이 보이게)
+- 프린트의 시각 특성(색상/형태/질감/잉크 두께/실 결/광택)을 절대 변형하지 말 것 — 참고 이미지의 프린트 그대로 옮겨야 함
+- 컴포지션은 정돈된 매거진 느낌 (불필요한 요소·로고·텍스트 추가 금지)
+${typeInfo ? `\n프린트 종류: ${typeInfo.label} — 시각 특성: ${typeInfo.desc}` : ''}`;
+
+  const data = await callGemini({
+    apiKey,
+    parts: [
+      { text: prompt },
+      { inlineData: { mimeType: 'image/jpeg', data: stripBase64(sourceImage) } },
+    ],
+    expectImage: true,
+    imageConfig: { aspectRatio: '1:1', imageSize: '4K' },
+  });
+  const imgPart = data?.candidates?.[0]?.content?.parts?.find(p => p.inlineData?.data);
+  if (imgPart?.inlineData?.data) return `data:image/jpeg;base64,${imgPart.inlineData.data}`;
+  const txtPart = data?.candidates?.[0]?.content?.parts?.find(p => p.text)?.text;
+  throw new Error(txtPart || '디테일 이미지 생성 실패');
 };
 
 // ==================== UI HELPERS ====================
@@ -426,14 +474,10 @@ const DetailPage = ({ meta, shots }) => (
 
     {/* INFO STRIP */}
     <section style={{ padding: '32px 56px 60px' }}>
-      <div style={{ background: '#f6f6f4', border: '1px solid #e8e6e0', borderRadius: 14, padding: 28, display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 20 }}>
+      <div style={{ background: '#f6f6f4', border: '1px solid #e8e6e0', borderRadius: 14, padding: 28, display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 20 }}>
         <div>
           <h5 style={{ fontSize: 11, color: '#8a8a8a', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 8 }}>품목</h5>
           <p style={{ fontSize: 15, fontWeight: 600 }}>{meta.title || '-'}</p>
-        </div>
-        <div>
-          <h5 style={{ fontSize: 11, color: '#8a8a8a', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 8 }}>제작 방식</h5>
-          <p style={{ fontSize: 15, fontWeight: 600 }}>주문제작</p>
         </div>
         <div>
           <h5 style={{ fontSize: 11, color: '#8a8a8a', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 8 }}>등록일</h5>
@@ -452,9 +496,10 @@ const DetailPage = ({ meta, shots }) => (
 export default function App() {
   const [productImage, setProductImage] = useState(null);
   const [productSize, setProductSize] = useState({ chest: '', length: '' });
-  const [prints, setPrints] = useState([]); // [{ id, image, analysis, analyzing, error }]
+  const [prints, setPrints] = useState([]); // [{ id, images: [dataUrl, ...], analysis, analyzing, error }]
   const [placements, setPlacements] = useState([]); // [{ side, printId, widthCm, offsetY, offsetX }]
   const [results, setResults] = useState({}); // { [side]: { status, dataUrl, error } }
+  const [detailShotResults, setDetailShotResults] = useState({ d1: null, d2: null }); // 매거진 디테일 컷 (자동 생성)
   const [isComposing, setIsComposing] = useState(false);
   const [extraPrompt, setExtraPrompt] = useState('');
   const [showDetailPage, setShowDetailPage] = useState(false);
@@ -473,7 +518,7 @@ export default function App() {
   // ---------- print pool handlers ----------
   const addPrint = async (dataUrl) => {
     const id = `p_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-    const newPrint = { id, image: dataUrl, analysis: null, analyzing: true, error: null };
+    const newPrint = { id, images: [dataUrl], analysis: null, analyzing: true, error: null };
     setPrints(prev => [...prev, newPrint]);
     if (!apiKey) {
       setPrints(prev => prev.map(p => p.id === id ? { ...p, analyzing: false, error: 'API Key 미설정' } : p));
@@ -487,12 +532,27 @@ export default function App() {
     }
   };
 
+  const addPrintRef = (printId) => async (dataUrl) => {
+    setPrints(prev => prev.map(p => p.id === printId
+      ? { ...p, images: [...p.images, dataUrl] }
+      : p));
+  };
+
+  const removePrintRef = (printId, imgIdx) => {
+    setPrints(prev => prev.map(p => {
+      if (p.id !== printId) return p;
+      const newImages = p.images.filter((_, i) => i !== imgIdx);
+      if (newImages.length === 0) return p;
+      return { ...p, images: newImages };
+    }));
+  };
+
   const reanalyzePrint = async (id) => {
     const target = prints.find(p => p.id === id);
     if (!target || !apiKey) return;
     setPrints(prev => prev.map(p => p.id === id ? { ...p, analyzing: true, error: null } : p));
     try {
-      const analysis = await analyzePrint({ apiKey, printImageDataUrl: target.image });
+      const analysis = await analyzePrint({ apiKey, printImageDataUrl: target.images[0] });
       setPrints(prev => prev.map(p => p.id === id ? { ...p, analysis, analyzing: false } : p));
     } catch (e) {
       setPrints(prev => prev.map(p => p.id === id ? { ...p, analyzing: false, error: e.message } : p));
@@ -548,7 +608,7 @@ export default function App() {
         .map(pl => {
           const print = prints.find(p => p.id === pl.printId);
           const visibility = view.primaryIncludes.includes(pl.side) ? 'full' : 'partial';
-          return { placement: pl, printImage: print.image, printType: print.analysis.type, visibility };
+          return { placement: pl, printImages: print.images, printType: print.analysis.type, visibility };
         });
       // 어떤 형태로든 placement가 보이면 view 생성 (소매만 있어도 partial로 표시)
       if (items.length > 0) viewJobs.push({ view, items });
@@ -578,6 +638,28 @@ export default function App() {
       }
     }));
 
+    // 디테일 클로즈업 자동 생성 — 프린트 풀의 추가 참고 사진(가까이서) 우선, 없으면 메인 사용
+    const detailSources = [];
+    prints.forEach(p => p.images.slice(1).forEach(img => detailSources.push({ img, type: p.analysis?.type })));
+    prints.forEach(p => detailSources.push({ img: p.images[0], type: p.analysis?.type }));
+    const detailJobs = detailSources.slice(0, 2);
+
+    if (detailJobs.length > 0) {
+      const initial = { d1: null, d2: null };
+      detailJobs.forEach((_, i) => { initial[i === 0 ? 'd1' : 'd2'] = { status: 'pending' }; });
+      setDetailShotResults(initial);
+
+      await Promise.all(detailJobs.map(async ({ img, type }, i) => {
+        const slot = i === 0 ? 'd1' : 'd2';
+        try {
+          const dataUrl = await composeDetail({ apiKey, sourceImage: img, printType: type });
+          setDetailShotResults(r => ({ ...r, [slot]: { status: 'done', dataUrl } }));
+        } catch (e) {
+          setDetailShotResults(r => ({ ...r, [slot]: { status: 'error', error: e.message } }));
+        }
+      }));
+    }
+
     setIsComposing(false);
     showNotification('합성 완료');
   };
@@ -601,7 +683,9 @@ export default function App() {
       ...prev,
       shot01: results.front_view?.dataUrl || prev.shot01,
       shot02: results.back_view?.dataUrl || prev.shot02,
-      shot03: prints[0]?.image || prev.shot03,
+      shot03: prints[0]?.images?.[0] || prev.shot03,
+      shot04: detailShotResults.d1?.dataUrl || prev.shot04,
+      shot05: detailShotResults.d2?.dataUrl || prev.shot05,
     }));
     // 분석 결과로부터 프린트 종류 라벨 자동 추정
     const firstAnalysisType = prints[0]?.analysis?.type;
@@ -732,8 +816,11 @@ export default function App() {
                 <div className="grid grid-cols-3 gap-1.5 mb-2">
                   {prints.map((p, idx) => (
                     <div key={p.id} className="relative group aspect-square border border-black bg-gray-50 overflow-hidden">
-                      <img src={p.image} alt="" className="w-full h-full object-contain" />
+                      <img src={p.images[0]} alt="" className="w-full h-full object-contain" />
                       <div className="absolute top-0.5 left-0.5 bg-black text-white text-[9px] font-bold px-1">#{idx + 1}</div>
+                      {p.images.length > 1 && (
+                        <div className="absolute bottom-0.5 left-0.5 bg-black text-white text-[9px] font-bold px-1">+{p.images.length - 1}</div>
+                      )}
                       {p.analyzing && (
                         <div className="absolute inset-0 bg-white/70 flex items-center justify-center">
                           <LucideLoader2 className="w-4 h-4 animate-spin text-black" />
@@ -775,7 +862,7 @@ export default function App() {
                   <div key={p.id} className="border border-black p-3 bg-white">
                     <div className="flex items-start gap-3">
                       <div className="w-14 h-14 border border-gray-200 shrink-0 overflow-hidden bg-gray-50">
-                        <img src={p.image} alt="" className="w-full h-full object-contain" />
+                        <img src={p.images[0]} alt="" className="w-full h-full object-contain" />
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center justify-between mb-1">
@@ -814,6 +901,38 @@ export default function App() {
                         ) : null}
                       </div>
                     </div>
+
+                    {/* Reference images: 멀리서/가까이서 등 추가 참고 사진 */}
+                    <div className="border-t border-gray-200 mt-3 pt-3">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400">참고 사진 ({p.images.length}장)</span>
+                        <span className="text-[10px] text-gray-400">멀리서·가까이서 등 여러 장 권장</span>
+                      </div>
+                      <div className="flex gap-1.5 flex-wrap">
+                        {p.images.map((img, imgIdx) => (
+                          <div key={imgIdx} className="relative group w-14 h-14 border border-gray-300 bg-gray-50 overflow-hidden">
+                            <img src={img} alt="" className="w-full h-full object-contain" />
+                            <div className="absolute top-0 left-0 bg-black text-white text-[8px] font-bold px-0.5">
+                              {imgIdx === 0 ? '메인' : imgIdx + 1}
+                            </div>
+                            {p.images.length > 1 && (
+                              <button onClick={() => removePrintRef(p.id, imgIdx)}
+                                className="absolute top-0 right-0 bg-white border border-black p-0.5 opacity-0 group-hover:opacity-100 hover:bg-black hover:text-white">
+                                <LucideX className="w-2 h-2" />
+                              </button>
+                            )}
+                          </div>
+                        ))}
+                        <div className="w-14 h-14">
+                          <ImageDropZone
+                            value={null}
+                            onChange={addPrintRef(p.id)}
+                            label="+ 추가"
+                            icon={LucidePlus}
+                          />
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -847,8 +966,8 @@ export default function App() {
                                     className={`aspect-square border overflow-hidden bg-white relative ${
                                       placement.printId === p.id ? 'border-black border-2' : 'border-gray-200 hover:border-gray-400'
                                     }`}
-                                    title={`프린트 #${idx + 1}`}>
-                                    <img src={p.image} alt="" className="w-full h-full object-contain" />
+                                    title={`프린트 #${idx + 1}${p.images.length > 1 ? ` (+${p.images.length - 1})` : ''}`}>
+                                    <img src={p.images[0]} alt="" className="w-full h-full object-contain" />
                                     <div className="absolute top-0 left-0 bg-black text-white text-[8px] font-bold px-0.5">{idx + 1}</div>
                                   </button>
                                 ))}
@@ -964,6 +1083,46 @@ export default function App() {
               );
             })}
           </div>
+
+          {/* Auto-generated detail shots (1:1) */}
+          {(detailShotResults.d1 || detailShotResults.d2) && (
+            <div className="mt-4">
+              <div className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-2">디테일 (자동 생성)</div>
+              <div className="grid grid-cols-2 gap-3">
+                {['d1', 'd2'].map(slot => {
+                  const r = detailShotResults[slot];
+                  if (!r) return null;
+                  return (
+                    <div key={slot} className="aspect-square bg-white border border-gray-200 flex flex-col relative overflow-hidden">
+                      {r.status === 'pending' ? (
+                        <div className="flex-1 flex flex-col items-center justify-center text-gray-500">
+                          <LucideLoader2 className="w-6 h-6 animate-spin mb-1" />
+                          <span className="text-[10px] font-bold uppercase tracking-wider">디테일 {slot === 'd1' ? '01' : '02'}</span>
+                        </div>
+                      ) : r.status === 'error' ? (
+                        <div className="flex-1 flex flex-col items-center justify-center text-red-500 px-2 text-center">
+                          <LucideXCircle className="w-6 h-6 mb-1" />
+                          <span className="text-[10px] font-bold uppercase tracking-wider mb-1">디테일 {slot === 'd1' ? '01' : '02'}</span>
+                          <span className="text-[9px] text-red-400 leading-tight">{r.error}</span>
+                        </div>
+                      ) : (
+                        <>
+                          <img src={r.dataUrl} alt={`디테일 ${slot}`} className="w-full h-full object-contain" />
+                          <div className="absolute top-1 left-1 bg-black text-white text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5">
+                            디테일 {slot === 'd1' ? '01' : '02'}
+                          </div>
+                          <button onClick={() => downloadResult(`detail_${slot}`, r.dataUrl)}
+                            className="absolute bottom-1 right-1 bg-black text-white p-1 hover:bg-gray-800">
+                            <LucideDownload className="w-3.5 h-3.5" />
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </section>
       </main>
 
