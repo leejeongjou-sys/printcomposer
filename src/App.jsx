@@ -15,13 +15,11 @@ const PRINT_TYPES = [
 ];
 
 const SIDES = [
-  { key: 'front',        label: '앞면' },
-  { key: 'back',         label: '뒷면' },
-  { key: 'left_sleeve',  label: '좌소매' },
-  { key: 'right_sleeve', label: '우소매' },
+  { key: 'front', label: '앞면' },
+  { key: 'back',  label: '뒷면' },
 ];
 
-// 면별 세로 위치 옵션 (value는 공통, label은 면별로 다름)
+// 면별 세로 위치 옵션
 const OFFSET_Y_BY_SIDE = {
   front: [
     { value: 'top',    label: '가슴 위' },
@@ -33,19 +31,9 @@ const OFFSET_Y_BY_SIDE = {
     { value: 'center', label: '등 중앙' },
     { value: 'bottom', label: '허리 부근' },
   ],
-  left_sleeve: [
-    { value: 'top',    label: '어깨 부근' },
-    { value: 'center', label: '소매 중간' },
-    { value: 'bottom', label: '소매 끝' },
-  ],
-  right_sleeve: [
-    { value: 'top',    label: '어깨 부근' },
-    { value: 'center', label: '소매 중간' },
-    { value: 'bottom', label: '소매 끝' },
-  ],
 };
 
-// 면별 좌우 옵션 (소매는 좌우 의미가 약해서 단일 옵션)
+// 면별 좌우 옵션
 const OFFSET_X_BY_SIDE = {
   front: [
     { value: 'left',   label: '좌측 가슴' },
@@ -57,26 +45,20 @@ const OFFSET_X_BY_SIDE = {
     { value: 'center', label: '중앙' },
     { value: 'right',  label: '오른쪽' },
   ],
-  left_sleeve:  [{ value: 'center', label: '소매 중앙' }],
-  right_sleeve: [{ value: 'center', label: '소매 중앙' }],
 };
 
-// 결과 view 정의 — 정면/후면 2개만 생성
-// primary: 그 시점에서 정면으로 또렷이 보이는 면
-// partial: 그 시점에서 소매 가장자리에 살짝만 비치는 면 (소매 중앙 프린트가 살짝 옆으로 비침)
+// 결과 view 정의 — 정면/후면 2개
 const VIEWS = [
   {
     key: 'front_view',
     label: '정면',
-    primaryIncludes: ['front'],
-    partialIncludes: ['left_sleeve', 'right_sleeve'],
+    sides: ['front'],
     viewInstruction: '의류의 정면이 보이는 시점. 앞면 가슴이 정면에서 보이는 컷.',
   },
   {
     key: 'back_view',
     label: '후면',
-    primaryIncludes: ['back'],
-    partialIncludes: ['left_sleeve', 'right_sleeve'],
+    sides: ['back'],
     viewInstruction: '의류의 뒷면이 보이는 시점. 등판이 정면에서 보이는 후면 컷.',
   },
 ];
@@ -125,29 +107,26 @@ const compressImage = (dataUrl, maxWidth = 2048, quality = 0.92) => new Promise(
   img.src = dataUrl;
 });
 
-// 3:4 비율 + 좌우 5% 여백으로 패딩 (흰 배경) + 고화질 압축
-// 제품 누끼 입력용 — 출력될 합성 이미지의 캔버스 비율을 미리 잡아둠
-const padTo34Image = (dataUrl, maxHeight = 2400, sideMarginPct = 5, quality = 0.92) => new Promise((resolve, reject) => {
+// 입력 이미지의 가장 가까운 Gemini 지원 비율 감지
+const detectClosestAspect = (dataUrl) => new Promise((resolve) => {
   const img = new Image();
   img.onload = () => {
-    const targetH = Math.min(maxHeight, Math.max(img.width, img.height));
-    const targetW = Math.round(targetH * 3 / 4);
-    const canvas = document.createElement('canvas');
-    canvas.width = targetW; canvas.height = targetH;
-    const ctx = canvas.getContext('2d');
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, targetW, targetH);
-    ctx.imageSmoothingQuality = 'high';
-    // 좌우 sideMarginPct% 여백 — 그 안쪽 영역에 제품을 가운데 정렬
-    const innerW = targetW * (1 - (sideMarginPct * 2) / 100);
-    const innerH = targetH;
-    const scale = Math.min(innerW / img.width, innerH / img.height);
-    const w = img.width * scale;
-    const h = img.height * scale;
-    ctx.drawImage(img, (targetW - w) / 2, (targetH - h) / 2, w, h);
-    resolve(canvas.toDataURL('image/jpeg', quality));
+    const r = img.width / img.height;
+    const supported = [
+      { name: '1:1',  val: 1 },
+      { name: '3:4',  val: 0.75 },
+      { name: '4:3',  val: 4 / 3 },
+      { name: '9:16', val: 9 / 16 },
+      { name: '16:9', val: 16 / 9 },
+    ];
+    let best = supported[0], minDiff = Infinity;
+    for (const s of supported) {
+      const d = Math.abs(s.val - r);
+      if (d < minDiff) { minDiff = d; best = s; }
+    }
+    resolve(best.name);
   };
-  img.onerror = reject;
+  img.onerror = () => resolve('1:1');
   img.src = dataUrl;
 });
 
@@ -182,6 +161,8 @@ const callGemini = async ({ apiKey, parts, expectImage, imageConfig }) => {
 
 const analyzePrint = async ({ apiKey, printImageDataUrl }) => {
   const prompt = `이 이미지는 의류에 사용되는 프린트(또는 자수)의 클로즈업 사진입니다.
+
+작업 1: 종류 판별
 다음 종류 중 가장 가까운 것을 정확히 1개 선택하세요.
 
 종류 목록 (value: 설명):
@@ -189,8 +170,28 @@ ${PRINT_TYPES.map(t => `- ${t.value}: ${t.label} — ${t.desc}`).join('\n')}
 
 판단 근거(광택, 입체감, 실 구조, 잉크 두께, 가장자리 등)를 1~2문장으로 적어주세요.
 
+작업 2: 위치 추천
+이 프린트가 의류의 어디에 들어가는 게 일반적·자연스러운지 추천하세요.
+- side: "front" (앞면 — 가슴, 앞판) 또는 "back" (뒷면 — 등판)
+- vertical: "top" / "center" / "bottom"
+- horizontal: "left" / "center" / "right"
+- width_pct: 의류 가로 폭 대비 프린트 가로 폭의 % (정수)
+  - 작은 가슴 로고/와펜류: 8-15
+  - 중간 가슴 그래픽: 18-30
+  - 등판 큰 그래픽/대형 레터링: 40-70
+판단 기준: 그래픽의 종류·크기·복잡도·텍스트 유무·일반적인 의류 디자인 관행.
+
 반드시 다음 JSON 형식으로만 응답:
-{"type": "<위 value 중 하나>", "notes": "<판단 근거>"}`;
+{
+  "type": "<위 value 중 하나>",
+  "notes": "<판단 근거>",
+  "suggested_placement": {
+    "side": "front" | "back",
+    "vertical": "top" | "center" | "bottom",
+    "horizontal": "left" | "center" | "right",
+    "width_pct": <integer>
+  }
+}`;
 
   const data = await callGemini({
     apiKey,
@@ -201,25 +202,33 @@ ${PRINT_TYPES.map(t => `- ${t.value}: ${t.label} — ${t.desc}`).join('\n')}
     expectImage: false
   });
   const text = data?.candidates?.[0]?.content?.parts?.find(p => p.text)?.text || '';
-  const match = text.match(/\{[\s\S]*?\}/);
+  const match = text.match(/\{[\s\S]*\}/);
   if (!match) throw new Error('분석 결과 파싱 실패');
   const parsed = JSON.parse(match[0]);
   if (!PRINT_TYPES.find(t => t.value === parsed.type)) {
     parsed.type = 'screen_print';
   }
+  // suggested_placement 검증
+  if (parsed.suggested_placement) {
+    const sp = parsed.suggested_placement;
+    if (!['front', 'back'].includes(sp.side)) sp.side = 'front';
+    if (!['top', 'center', 'bottom'].includes(sp.vertical)) sp.vertical = 'center';
+    if (!['left', 'center', 'right'].includes(sp.horizontal)) sp.horizontal = 'center';
+    sp.width_pct = Math.max(5, Math.min(80, Math.round(Number(sp.width_pct) || 25)));
+  }
   return parsed;
 };
 
-// items: [{ printImages: [...], printType, placement: { side, widthPct, offsetY, offsetX }, visibility }]
+// items: [{ printImages: [...], printType, placement: { side, widthPct, offsetY, offsetX } }]
 const composeView = async ({
   apiKey, productImageDataUrl, items,
-  viewLabel, viewInstruction, extraPrompt
+  viewLabel, viewInstruction, extraPrompt, aspectRatio
 }) => {
   // 모든 참고 이미지를 글로벌 번호로 매핑
   let globalIdx = 0;
   const placementsSpec = items.map((item, i) => {
     const placementIdx = i + 1;
-    const { placement, printType, visibility, printImages } = item;
+    const { placement, printType, printImages } = item;
     const typeInfo = PRINT_TYPES.find(t => t.value === printType);
     const sideLabel = SIDES.find(s => s.key === placement.side)?.label || placement.side;
     const yLabel = OFFSET_Y_BY_SIDE[placement.side]?.find(o => o.value === placement.offsetY)?.label || '';
@@ -264,18 +273,14 @@ const composeView = async ({
         type_label: typeInfo?.label,
         visual_traits: typeInfo?.desc,
       },
-      visibility,
-      rendering_note:
-        visibility === 'partial'
-          ? '이 프린트는 소매 바깥쪽(측면)에 위치하므로 이 시점에서는 소매 실루엣 끝쪽에 약 20-30%만 살짝 비쳐 보여야 함. 절대 정면을 향해 평평하게 전체를 노출하지 말 것. 의도는 "이 소매에 그래픽이 있다는 힌트"를 주는 것.'
-          : '명시된 크기 비율과 위치를 정확히 지켜 정면으로 또렷이 합성',
+      rendering_note: '명시된 크기 비율과 위치를 정확히 지켜 정면으로 또렷이 합성',
     };
   });
   const totalRefImages = globalIdx;
 
   const spec = {
     input_format: {
-      product_image: '흰 배경의 제품 누끼(배경 제거된 컷). 3:4 비율로 패딩되어 있고 좌우 5% 여백이 이미 적용되어 있음.',
+      product_image: '제품 누끼 (배경이 흰색이거나 투명한 의류 사진). 이 비율과 구도를 그대로 출력에 유지할 것.',
       print_images: '실제 제작된 프린트의 클로즈업 사진. 각 프린트의 색상/형태/질감/잉크 두께/실 결이 그대로 보임.',
     },
     view: {
@@ -284,13 +289,16 @@ const composeView = async ({
     },
     placements: placementsSpec,
     output: {
-      aspect_ratio: '3:4',
-      horizontal_margin_pct: 5,
+      aspect_ratio: '1:1',
+      aspect_ratio_note: '결과 캔버스는 정확히 정사각형(1:1). 앞면/뒷면 모두 같은 크기로 출력되어야 함.',
+      background: '#FFFFFF',
+      background_note: '배경은 반드시 순백색 #FFFFFF (RGB 255,255,255). 그라데이션, 텍스처, 그림자, 회색 톤 일체 없이 완전히 깨끗한 흰색.',
       resolution: '4K',
-      composition: '제품은 가로 폭의 90%를 차지(좌우 5%씩 흰 여백). 세로는 제품 전체가 자연스럽게 들어가도록.',
+      composition: '제품을 정사각형 캔버스 중앙에 배치. 제품의 실루엣/색상/형태는 [제품 이미지]를 그대로 따를 것 (제품 비율 자체는 변경 금지, 캔버스만 1:1).',
     },
-    must_preserve: ['제품의 실루엣', '제품 원래 색상', '흰 배경', '조명', '제품의 형태'],
+    must_preserve: ['제품의 실루엣', '제품 원래 색상', '제품의 형태와 비율', '제품 이미지의 구도'],
     must_apply: [
+      '배경은 반드시 #FFFFFF 순백색 (다른 색·그라데이션·그림자 절대 금지)',
       '프린트는 [프린트 이미지 #N]에 보이는 색상/형태/질감/잉크특성을 그대로 옮길 것 (재해석/재생성/스타일화 금지)',
       '원단의 주름·음영·결이 프린트 위에 자연스럽게 반영',
       '각 placement의 size.width_pct_of_garment_width 값을 픽셀 단위로 정확히 반영 (의류 가로 폭의 X%)',
@@ -309,10 +317,9 @@ ${JSON.stringify(spec, null, 2)}
 1. 각 placement의 \`image_refs\` 배열은 같은 프린트의 여러 참고 사진(메인 + 다른 시점/거리). 위치는 메인을 기준으로 잡되, 질감·잉크 특성·실 결 등 시각 디테일은 모든 참고 사진을 종합해서 정확히 재현할 것.
 2. 어떤 참고 사진의 시각 특성도 절대 변형/재해석하지 말고 그대로 옮길 것.
 3. \`size.width_pct_of_garment_width\`는 의류 가로 폭 대비 프린트 가로 폭의 % — 화면에서 의류 폭을 측정하고 그 N%로 정확히 합성할 것 (임의로 키우거나 줄이지 말 것).
-4. \`visibility="partial"\`인 placement는 반드시 \`rendering_note\`의 지시를 따를 것.
-5. \`must_preserve\` 항목은 절대 수정 금지.
-6. 결과 이미지: \`output.aspect_ratio\` (3:4), \`output.horizontal_margin_pct\` (좌우 5% 흰 여백), \`output.resolution\` (4K).
-7. \`user_extra_instructions\`가 있다면 사용자가 직접 추가한 디테일 요구사항이므로, 위 규칙과 충돌하지 않는 한 우선적으로 반영할 것 (특히 크기·위치 미세조정).`;
+4. \`must_preserve\` 항목은 절대 수정 금지.
+5. 결과 이미지는 반드시 1:1 정사각형 캔버스, 배경은 #FFFFFF 순백색. 제품은 캔버스 중앙에 자연스럽게 배치하되 제품 자체의 형태/비율은 [제품 이미지]를 따를 것.
+6. \`user_extra_instructions\`가 있다면 사용자가 직접 추가한 디테일 요구사항이므로, 위 규칙과 충돌하지 않는 한 우선적으로 반영할 것 (특히 크기·위치 미세조정).`;
 
   const allImages = items.flatMap(item => item.printImages);
   const parts = [
@@ -325,7 +332,7 @@ ${JSON.stringify(spec, null, 2)}
     apiKey,
     parts,
     expectImage: true,
-    imageConfig: { aspectRatio: '3:4', imageSize: '4K' },
+    imageConfig: { ...(aspectRatio ? { aspectRatio } : {}), imageSize: '4K' },
   });
   const imgPart = data?.candidates?.[0]?.content?.parts?.find(p => p.inlineData?.data);
   if (imgPart?.inlineData?.data) return `data:image/jpeg;base64,${imgPart.inlineData.data}`;
@@ -369,11 +376,10 @@ ${typeInfo ? `\n프린트 종류: ${typeInfo.label} — 시각 특성: ${typeInf
 };
 
 // ==================== UI HELPERS ====================
-const ImageDropZone = ({ value, onChange, label, icon: Icon, height = 'aspect-square', padMode = null, multiple = false }) => {
+const ImageDropZone = ({ value, onChange, label, icon: Icon, height = 'aspect-square', multiple = false }) => {
   const inputRef = useRef(null);
   const processFile = async (file) => {
     const dataUrl = await fileToDataUrl(file);
-    if (padMode === '3:4') return await padTo34Image(dataUrl);
     return await compressImage(dataUrl);
   };
   const handleFiles = async (fileList) => {
@@ -421,12 +427,51 @@ const ImageDropZone = ({ value, onChange, label, icon: Icon, height = 'aspect-sq
 };
 
 // ==================== DETAIL PAGE ====================
+const CATEGORY_PRESETS = ['집업', '후드', '맨투맨', '긴팔', '반팔'];
+const PRINT_TYPE_PRESETS = ['나염', '자수'];
+const COLOR_PRESETS = ['블랙', '화이트', '그레이'];
+
 const DETAIL_PAGE_DEFAULTS = {
   title: '',
   productName: '',
   category: '맨투맨',
   printType: '나염',
-  color: '차콜',
+  color: '블랙',
+};
+
+// 프리셋 + 직접입력 셀렉트
+const PresetSelect = ({ value, onChange, options, placeholder, label }) => {
+  const isCustom = value !== '' && !options.includes(value);
+  const selectValue = isCustom ? '__custom' : value;
+  return (
+    <div className="space-y-1">
+      <label className="text-[10px] text-gray-500 block mb-0.5">{label}</label>
+      <select
+        value={selectValue}
+        onChange={(e) => {
+          if (e.target.value === '__custom') {
+            if (!isCustom) onChange('');
+          } else {
+            onChange(e.target.value);
+          }
+        }}
+        className="w-full border border-gray-300 px-2 py-1.5 text-xs focus:outline-none focus:border-black bg-white"
+      >
+        {options.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+        <option value="__custom">직접입력</option>
+      </select>
+      {isCustom && (
+        <input
+          type="text"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder}
+          autoFocus
+          className="w-full border border-gray-300 px-2 py-1.5 text-xs focus:outline-none focus:border-black"
+        />
+      )}
+    </div>
+  );
 };
 
 // 동적 슬롯: shots는 [{ id, src }] 배열 (개수 무제한)
@@ -436,13 +481,13 @@ const DetailPage = ({ meta, shots }) => (
     {/* HERO */}
     <section style={{ padding: '60px 56px 32px', textAlign: 'center' }}>
       <div style={{ marginBottom: 20, textAlign: 'center', fontSize: 0 }}>
-        {meta.category && <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', verticalAlign: 'middle', margin: '0 4px', padding: '7px 14px', borderRadius: 999, fontSize: 12, fontWeight: 500, lineHeight: 1, color: '#fff', background: '#0a0a0a' }}><span className="dp-pill-text">{meta.category}</span></span>}
-        {meta.printType && <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', verticalAlign: 'middle', margin: '0 4px', padding: '7px 14px', borderRadius: 999, fontSize: 12, fontWeight: 500, lineHeight: 1, color: '#3a3a3a', background: '#f6f6f4', border: '1px solid #e8e6e0' }}><span className="dp-pill-text">{meta.printType}</span></span>}
-        {meta.color && <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', verticalAlign: 'middle', margin: '0 4px', padding: '7px 14px', borderRadius: 999, fontSize: 12, fontWeight: 500, lineHeight: 1, color: '#3a3a3a', background: '#f6f6f4', border: '1px solid #e8e6e0' }}><span className="dp-pill-text">{meta.color}</span></span>}
+        {meta.category && <span className="dp-pill" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', verticalAlign: 'middle', margin: '0 4px', padding: '8px 16px', borderRadius: 999, fontSize: 14, fontWeight: 500, lineHeight: 1, color: '#fff', background: '#0a0a0a' }}><span className="dp-pill-text">{meta.category}</span></span>}
+        {meta.printType && <span className="dp-pill" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', verticalAlign: 'middle', margin: '0 4px', padding: '8px 16px', borderRadius: 999, fontSize: 14, fontWeight: 500, lineHeight: 1, color: '#3a3a3a', background: '#f6f6f4', border: '1px solid #e8e6e0' }}><span className="dp-pill-text">{meta.printType}</span></span>}
+        {meta.color && <span className="dp-pill" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', verticalAlign: 'middle', margin: '0 4px', padding: '8px 16px', borderRadius: 999, fontSize: 14, fontWeight: 500, lineHeight: 1, color: '#3a3a3a', background: '#f6f6f4', border: '1px solid #e8e6e0' }}><span className="dp-pill-text">{meta.color}</span></span>}
       </div>
-      <h1 style={{ fontSize: 54, lineHeight: 1.05, letterSpacing: '-0.03em', fontWeight: 700, marginBottom: meta.productName ? 12 : 0, textAlign: 'center' }}>{meta.title || '제목 없음'}</h1>
+      <h1 style={{ fontSize: 54, lineHeight: 1.05, letterSpacing: '-0.03em', fontWeight: 700, marginBottom: 0, textAlign: 'center' }}>{meta.title || '제목 없음'}</h1>
       {meta.productName && (
-        <div style={{ fontSize: 14, color: '#8a8a8a', textAlign: 'center', marginTop: 4 }}>{meta.productName}</div>
+        <div style={{ fontSize: 16, color: '#8a8a8a', textAlign: 'center', marginTop: 24 }}>{meta.productName}</div>
       )}
     </section>
 
@@ -464,7 +509,8 @@ export default function App() {
   const [placements, setPlacements] = useState([]); // [{ side, printId, widthPct, offsetY, offsetX }]
   const [results, setResults] = useState({}); // { [side]: { status, dataUrl, error } }
   const [detailShotResults, setDetailShotResults] = useState({ d1: null, d2: null }); // 매거진 디테일 컷 (자동 생성)
-  const [isComposing, setIsComposing] = useState(false);
+  const [composeCount, setComposeCount] = useState(0);
+  const isComposing = composeCount > 0;
   const [extraPrompt, setExtraPrompt] = useState('');
   const [showDetailPage, setShowDetailPage] = useState(false);
   const [detailMeta, setDetailMeta] = useState(DETAIL_PAGE_DEFAULTS);
@@ -491,6 +537,20 @@ export default function App() {
     try {
       const analysis = await analyzePrint({ apiKey, printImageDataUrl: dataUrl });
       setPrints(prev => prev.map(p => p.id === id ? { ...p, analysis, analyzing: false } : p));
+      // 자동 placement: 추천된 면이 비어있으면 자동 생성
+      if (analysis.suggested_placement) {
+        const sp = analysis.suggested_placement;
+        setPlacements(prev => {
+          if (prev.find(pl => pl.side === sp.side)) return prev; // 이미 있으면 유지
+          return [...prev, {
+            side: sp.side,
+            printId: id,
+            widthPct: sp.width_pct,
+            offsetY: sp.vertical,
+            offsetX: sp.horizontal,
+          }];
+        });
+      }
     } catch (e) {
       setPrints(prev => prev.map(p => p.id === id ? { ...p, analyzing: false, error: e.message } : p));
     }
@@ -539,9 +599,8 @@ export default function App() {
     setPlacements(prev => {
       const has = prev.find(pl => pl.side === side);
       if (has) return prev.filter(pl => pl.side !== side);
-      const defaultWidth = (side === 'left_sleeve' || side === 'right_sleeve') ? 12 : 30;
       const defaultPrintId = prints[0]?.id || null;
-      return [...prev, { side, printId: defaultPrintId, widthPct: defaultWidth, offsetY: 'center', offsetX: 'center' }];
+      return [...prev, { side, printId: defaultPrintId, widthPct: 30, offsetY: 'center', offsetX: 'center' }];
     });
   };
 
@@ -564,25 +623,18 @@ export default function App() {
     return true;
   };
 
-  // 단일 view (정면 or 후면) 합성
-  const composeOneView = async (viewKey) => {
-    if (!validateCompose()) return;
+  // 내부: view 1개 합성 (isComposing 카운트 관리 X)
+  const composeViewInternal = async (viewKey) => {
     const view = VIEWS.find(v => v.key === viewKey);
     if (!view) return;
-
     const items = placements
-      .filter(pl => view.primaryIncludes.includes(pl.side) || view.partialIncludes.includes(pl.side))
+      .filter(pl => view.sides.includes(pl.side))
       .map(pl => {
         const print = prints.find(p => p.id === pl.printId);
-        const visibility = view.primaryIncludes.includes(pl.side) ? 'full' : 'partial';
-        return { placement: pl, printImages: print.images, printType: print.analysis.type, visibility };
+        return { placement: pl, printImages: print.images, printType: print.analysis.type };
       });
-    if (items.length === 0) {
-      showNotification(`${view.label}에 합성할 placement가 없습니다`, 'error');
-      return;
-    }
+    if (items.length === 0) return null;
 
-    setIsComposing(true);
     setResults(r => ({ ...r, [view.key]: { status: 'pending' } }));
     try {
       const dataUrl = await composeView({
@@ -592,32 +644,44 @@ export default function App() {
         viewLabel: view.label,
         viewInstruction: view.viewInstruction,
         extraPrompt,
+        aspectRatio: '1:1',
       });
       setResults(r => ({ ...r, [view.key]: { status: 'done', dataUrl } }));
-      showNotification(`${view.label} 합성 완료`);
+      return 'done';
     } catch (e) {
       setResults(r => ({ ...r, [view.key]: { status: 'error', error: e.message } }));
-      showNotification(`${view.label} 합성 실패`, 'error');
-    } finally {
-      setIsComposing(false);
+      return 'error';
     }
   };
 
-  // 디테일 자동 생성 (프린트 풀 기반)
-  const composeDetailShots = async () => {
-    if (!apiKey) { showNotification('API Key를 먼저 설정하세요', 'error'); return; }
-    if (prints.length === 0) { showNotification('프린트를 1개 이상 업로드하세요', 'error'); return; }
-    for (const p of prints) {
-      if (!p.analysis) { showNotification('아직 분석 중인 프린트가 있습니다', 'error'); return; }
+  // 단일 view 합성 (개별 버튼)
+  const composeOneView = async (viewKey) => {
+    if (!validateCompose()) return;
+    const view = VIEWS.find(v => v.key === viewKey);
+    if (!view) return;
+    const hasItems = placements.some(pl => view.sides.includes(pl.side));
+    if (!hasItems) {
+      showNotification(`${view.label}에 합성할 placement가 없습니다`, 'error');
+      return;
     }
+    setComposeCount(c => c + 1);
+    try {
+      const result = await composeViewInternal(viewKey);
+      if (result === 'done') showNotification(`${view.label} 합성 완료`);
+      else if (result === 'error') showNotification(`${view.label} 합성 실패`, 'error');
+    } finally {
+      setComposeCount(c => c - 1);
+    }
+  };
 
+  // 내부: 디테일 생성 (isComposing 카운트 관리 X)
+  const composeDetailShotsInternal = async () => {
     const detailSources = [];
     prints.forEach(p => p.images.slice(1).forEach(img => detailSources.push({ img, type: p.analysis?.type })));
     prints.forEach(p => detailSources.push({ img: p.images[0], type: p.analysis?.type }));
     const detailJobs = detailSources.slice(0, 2);
     if (detailJobs.length === 0) return;
 
-    setIsComposing(true);
     const initial = { d1: null, d2: null };
     detailJobs.forEach((_, i) => { initial[i === 0 ? 'd1' : 'd2'] = { status: 'pending' }; });
     setDetailShotResults(initial);
@@ -631,9 +695,38 @@ export default function App() {
         setDetailShotResults(r => ({ ...r, [slot]: { status: 'error', error: e.message } }));
       }
     }));
+  };
 
-    setIsComposing(false);
-    showNotification('디테일 생성 완료');
+  // 디테일 생성 (개별 버튼)
+  const composeDetailShots = async () => {
+    if (!apiKey) { showNotification('API Key를 먼저 설정하세요', 'error'); return; }
+    if (prints.length === 0) { showNotification('프린트를 1개 이상 업로드하세요', 'error'); return; }
+    for (const p of prints) {
+      if (!p.analysis) { showNotification('아직 분석 중인 프린트가 있습니다', 'error'); return; }
+    }
+    setComposeCount(c => c + 1);
+    try {
+      await composeDetailShotsInternal();
+      showNotification('디테일 생성 완료');
+    } finally {
+      setComposeCount(c => c - 1);
+    }
+  };
+
+  // 전체 합성 (앞면 + 뒷면 + 디테일 동시)
+  const composeAllViews = async () => {
+    if (!validateCompose()) return;
+    setComposeCount(c => c + 1);
+    try {
+      await Promise.all([
+        composeViewInternal('front_view'),
+        composeViewInternal('back_view'),
+        composeDetailShotsInternal(),
+      ]);
+      showNotification('전체 합성 완료');
+    } finally {
+      setComposeCount(c => c - 1);
+    }
   };
 
   const downloadResult = (side, dataUrl) => {
@@ -812,11 +905,10 @@ export default function App() {
               <ImageDropZone
                 value={productImage}
                 onChange={setProductImage}
-                label="제품 누끼 업로드 (흰 배경)"
+                label="제품 누끼 업로드"
                 icon={LucideUploadCloud}
-                padMode="3:4"
               />
-              <p className="text-[10px] text-gray-400 mt-1">3:4 비율 + 좌우 5% 여백 자동 적용 · 누끼/배경 제거된 사진 권장</p>
+              <p className="text-[10px] text-gray-400 mt-1">결과 비율은 이 이미지 비율을 그대로 따릅니다 · 흰 배경/누끼 권장</p>
             </div>
 
             <div>
@@ -946,7 +1038,6 @@ export default function App() {
                     const checked = !!placement;
                     const yOpts = OFFSET_Y_BY_SIDE[side.key] || [];
                     const xOpts = OFFSET_X_BY_SIDE[side.key] || [];
-                    const isSleeve = side.key === 'left_sleeve' || side.key === 'right_sleeve';
                     return (
                       <div key={side.key} className={`border p-3 ${checked ? 'border-black bg-gray-50' : 'border-gray-200'}`}>
                         <label className="flex items-center gap-2 cursor-pointer mb-1">
@@ -974,7 +1065,7 @@ export default function App() {
                               </div>
                             </div>
                             <div className="flex items-center gap-2">
-                              <input type="number" value={placement.widthPct} min="1" max={isSleeve ? 30 : 80}
+                              <input type="number" value={placement.widthPct} min="1" max="80"
                                 onChange={(e) => updatePlacement(side.key, 'widthPct', Number(e.target.value))}
                                 className="w-16 border border-gray-300 px-2 py-1 text-xs focus:outline-none focus:border-black" />
                               <span className="text-[11px] text-gray-500">% (의류 가로폭 대비)</span>
@@ -1019,35 +1110,47 @@ export default function App() {
             <p className="text-[10px] text-gray-400 mt-1">크기/위치 미세조정, 재질 디테일 등 자유 서술. JSON spec의 user_extra_instructions로 들어감.</p>
           </div>
 
-          <div className="grid grid-cols-2 gap-2 mt-3">
+          <button
+            onClick={composeAllViews}
+            disabled={isComposing || prints.length === 0 || placements.length === 0}
+            className="w-full mt-3 py-3 bg-black text-white text-sm font-bold uppercase tracking-wider disabled:opacity-30 hover:bg-gray-800 flex items-center justify-center gap-2"
+          >
+            {isComposing
+              ? <><LucideLoader2 className="w-4 h-4 animate-spin" /> 전체 합성 중...</>
+              : <><LucideWand2 className="w-4 h-4" /> 전체 합성 (앞·뒤·디테일)</>}
+          </button>
+          <div className="grid grid-cols-3 gap-2 mt-2">
             <button
               onClick={() => composeOneView('front_view')}
               disabled={isComposing || prints.length === 0 || placements.length === 0}
-              className="py-3 bg-black text-white text-xs font-bold uppercase tracking-wider disabled:opacity-30 hover:bg-gray-800 flex items-center justify-center gap-1.5"
+              className="py-2 border border-black text-black text-[11px] font-bold uppercase tracking-wider disabled:opacity-30 hover:bg-black hover:text-white flex items-center justify-center gap-1"
+              title="앞면만 합성"
             >
-              {isComposing && results.front_view?.status === 'pending'
-                ? <><LucideLoader2 className="w-3.5 h-3.5 animate-spin" /> 앞면 중...</>
-                : <><LucideWand2 className="w-3.5 h-3.5" /> 앞면 합성</>}
+              {results.front_view?.status === 'pending'
+                ? <><LucideLoader2 className="w-3 h-3 animate-spin" /> 앞면</>
+                : <>앞면</>}
             </button>
             <button
               onClick={() => composeOneView('back_view')}
               disabled={isComposing || prints.length === 0 || placements.length === 0}
-              className="py-3 bg-black text-white text-xs font-bold uppercase tracking-wider disabled:opacity-30 hover:bg-gray-800 flex items-center justify-center gap-1.5"
+              className="py-2 border border-black text-black text-[11px] font-bold uppercase tracking-wider disabled:opacity-30 hover:bg-black hover:text-white flex items-center justify-center gap-1"
+              title="뒷면만 합성"
             >
-              {isComposing && results.back_view?.status === 'pending'
-                ? <><LucideLoader2 className="w-3.5 h-3.5 animate-spin" /> 뒷면 중...</>
-                : <><LucideWand2 className="w-3.5 h-3.5" /> 뒷면 합성</>}
+              {results.back_view?.status === 'pending'
+                ? <><LucideLoader2 className="w-3 h-3 animate-spin" /> 뒷면</>
+                : <>뒷면</>}
+            </button>
+            <button
+              onClick={composeDetailShots}
+              disabled={isComposing || prints.length === 0}
+              className="py-2 border border-black text-black text-[11px] font-bold uppercase tracking-wider disabled:opacity-30 hover:bg-black hover:text-white flex items-center justify-center gap-1"
+              title="디테일 컷만 생성"
+            >
+              {(detailShotResults.d1?.status === 'pending' || detailShotResults.d2?.status === 'pending')
+                ? <><LucideLoader2 className="w-3 h-3 animate-spin" /> 디테일</>
+                : <>디테일</>}
             </button>
           </div>
-          <button
-            onClick={composeDetailShots}
-            disabled={isComposing || prints.length === 0}
-            className="w-full mt-2 py-2.5 border border-black text-black text-xs font-bold uppercase tracking-wider disabled:opacity-30 hover:bg-black hover:text-white flex items-center justify-center gap-1.5"
-          >
-            {isComposing && (detailShotResults.d1?.status === 'pending' || detailShotResults.d2?.status === 'pending')
-              ? <><LucideLoader2 className="w-3.5 h-3.5 animate-spin" /> 디테일 중...</>
-              : <><LucideImage className="w-3.5 h-3.5" /> 디테일 생성</>}
-          </button>
         </section>
 
         {/* ============ Column 3: Results ============ */}
@@ -1196,24 +1299,27 @@ export default function App() {
                       className="w-full border border-gray-300 px-2 py-1.5 text-sm focus:outline-none focus:border-black" />
                   </div>
                   <div className="grid grid-cols-3 gap-1.5">
-                    <div>
-                      <label className="text-[10px] text-gray-500 block mb-0.5">품목</label>
-                      <input type="text" value={detailMeta.category}
-                        onChange={(e) => setDetailMeta(m => ({ ...m, category: e.target.value }))}
-                        className="w-full border border-gray-300 px-2 py-1.5 text-xs focus:outline-none focus:border-black" />
-                    </div>
-                    <div>
-                      <label className="text-[10px] text-gray-500 block mb-0.5">프린트</label>
-                      <input type="text" value={detailMeta.printType}
-                        onChange={(e) => setDetailMeta(m => ({ ...m, printType: e.target.value }))}
-                        className="w-full border border-gray-300 px-2 py-1.5 text-xs focus:outline-none focus:border-black" />
-                    </div>
-                    <div>
-                      <label className="text-[10px] text-gray-500 block mb-0.5">색상</label>
-                      <input type="text" value={detailMeta.color}
-                        onChange={(e) => setDetailMeta(m => ({ ...m, color: e.target.value }))}
-                        className="w-full border border-gray-300 px-2 py-1.5 text-xs focus:outline-none focus:border-black" />
-                    </div>
+                    <PresetSelect
+                      label="품목"
+                      value={detailMeta.category}
+                      onChange={(v) => setDetailMeta(m => ({ ...m, category: v }))}
+                      options={CATEGORY_PRESETS}
+                      placeholder="품목 입력"
+                    />
+                    <PresetSelect
+                      label="프린트"
+                      value={detailMeta.printType}
+                      onChange={(v) => setDetailMeta(m => ({ ...m, printType: v }))}
+                      options={PRINT_TYPE_PRESETS}
+                      placeholder="프린트 입력"
+                    />
+                    <PresetSelect
+                      label="색상"
+                      value={detailMeta.color}
+                      onChange={(v) => setDetailMeta(m => ({ ...m, color: v }))}
+                      options={COLOR_PRESETS}
+                      placeholder="색상 입력"
+                    />
                   </div>
                   <div>
                     <label className="text-[10px] text-gray-500 block mb-0.5">제품명 (선택)</label>

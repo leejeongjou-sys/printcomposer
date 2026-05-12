@@ -7,3 +7,7 @@
   display: inline-block;
   transform: translateY(-6px);
 }
+/* pill 자체도 인쇄 시 1px 위로 */
+.dp-capture-mode .dp-pill {
+  transform: translateY(-1px);
+}
