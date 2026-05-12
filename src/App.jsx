@@ -369,15 +369,25 @@ ${typeInfo ? `\n프린트 종류: ${typeInfo.label} — 시각 특성: ${typeInf
 };
 
 // ==================== UI HELPERS ====================
-const ImageDropZone = ({ value, onChange, label, icon: Icon, height = 'aspect-square', padMode = null }) => {
+const ImageDropZone = ({ value, onChange, label, icon: Icon, height = 'aspect-square', padMode = null, multiple = false }) => {
   const inputRef = useRef(null);
-  const handleFile = async (file) => {
-    if (!file) return;
+  const processFile = async (file) => {
     const dataUrl = await fileToDataUrl(file);
-    let processed;
-    if (padMode === '3:4') processed = await padTo34Image(dataUrl);
-    else processed = await compressImage(dataUrl);
-    onChange(processed);
+    if (padMode === '3:4') return await padTo34Image(dataUrl);
+    return await compressImage(dataUrl);
+  };
+  const handleFiles = async (fileList) => {
+    const files = Array.from(fileList || []).filter(f => f && f.type?.startsWith('image/'));
+    if (files.length === 0) return;
+    if (multiple) {
+      for (const f of files) {
+        const processed = await processFile(f);
+        onChange(processed);
+      }
+    } else {
+      const processed = await processFile(files[0]);
+      onChange(processed);
+    }
   };
   return (
     <div>
@@ -385,13 +395,14 @@ const ImageDropZone = ({ value, onChange, label, icon: Icon, height = 'aspect-sq
         ref={inputRef}
         type="file"
         accept="image/*"
+        multiple={multiple}
         className="hidden"
-        onChange={(e) => handleFile(e.target.files?.[0])}
+        onChange={(e) => { handleFiles(e.target.files); e.target.value = ''; }}
       />
       <div
         onClick={() => inputRef.current?.click()}
         onDragOver={(e) => { e.preventDefault(); }}
-        onDrop={(e) => { e.preventDefault(); handleFile(e.dataTransfer.files?.[0]); }}
+        onDrop={(e) => { e.preventDefault(); handleFiles(e.dataTransfer.files); }}
         className={`${height} border-2 border-dashed cursor-pointer flex items-center justify-center overflow-hidden transition-colors ${
           value ? 'border-black bg-white' : 'border-gray-300 hover:border-black hover:bg-gray-50'
         }`}
@@ -425,9 +436,9 @@ const DetailPage = ({ meta, shots }) => (
     {/* HERO */}
     <section style={{ padding: '60px 56px 32px', textAlign: 'center' }}>
       <div style={{ marginBottom: 20, textAlign: 'center', fontSize: 0 }}>
-        {meta.category && <span style={{ display: 'inline-block', verticalAlign: 'middle', margin: '0 4px', height: 28, lineHeight: '28px', padding: '0 14px', borderRadius: 999, fontSize: 12, fontWeight: 500, color: '#fff', background: '#0a0a0a' }}>{meta.category}</span>}
-        {meta.printType && <span style={{ display: 'inline-block', verticalAlign: 'middle', margin: '0 4px', height: 28, lineHeight: '28px', padding: '0 14px', borderRadius: 999, fontSize: 12, fontWeight: 500, color: '#3a3a3a', background: '#f6f6f4', border: '1px solid #e8e6e0' }}>{meta.printType}</span>}
-        {meta.color && <span style={{ display: 'inline-block', verticalAlign: 'middle', margin: '0 4px', height: 28, lineHeight: '28px', padding: '0 14px', borderRadius: 999, fontSize: 12, fontWeight: 500, color: '#3a3a3a', background: '#f6f6f4', border: '1px solid #e8e6e0' }}>{meta.color}</span>}
+        {meta.category && <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', verticalAlign: 'middle', margin: '0 4px', padding: '7px 14px', borderRadius: 999, fontSize: 12, fontWeight: 500, lineHeight: 1, color: '#fff', background: '#0a0a0a' }}>{meta.category}</span>}
+        {meta.printType && <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', verticalAlign: 'middle', margin: '0 4px', padding: '7px 14px', borderRadius: 999, fontSize: 12, fontWeight: 500, lineHeight: 1, color: '#3a3a3a', background: '#f6f6f4', border: '1px solid #e8e6e0' }}>{meta.printType}</span>}
+        {meta.color && <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', verticalAlign: 'middle', margin: '0 4px', padding: '7px 14px', borderRadius: 999, fontSize: 12, fontWeight: 500, lineHeight: 1, color: '#3a3a3a', background: '#f6f6f4', border: '1px solid #e8e6e0' }}>{meta.color}</span>}
       </div>
       <h1 style={{ fontSize: 54, lineHeight: 1.05, letterSpacing: '-0.03em', fontWeight: 700, marginBottom: meta.productName ? 12 : 0, textAlign: 'center' }}>{meta.title || '제목 없음'}</h1>
       {meta.productName && (
@@ -539,79 +550,90 @@ export default function App() {
   };
 
   // ---------- compose ----------
-  const handleCompose = async () => {
-    if (!apiKey) return showNotification('API Key를 먼저 설정하세요', 'error');
-    if (!productImage) return showNotification('제품컷을 업로드하세요', 'error');
-    if (prints.length === 0) return showNotification('프린트를 1개 이상 업로드하세요', 'error');
-    if (placements.length === 0) return showNotification('배치할 위치를 선택하세요', 'error');
-
-    // placement별 print 매핑 + 분석 완료 확인
+  // 공통 검증
+  const validateCompose = () => {
+    if (!apiKey) { showNotification('API Key를 먼저 설정하세요', 'error'); return false; }
+    if (!productImage) { showNotification('제품컷을 업로드하세요', 'error'); return false; }
+    if (prints.length === 0) { showNotification('프린트를 1개 이상 업로드하세요', 'error'); return false; }
+    if (placements.length === 0) { showNotification('배치할 위치를 선택하세요', 'error'); return false; }
     for (const pl of placements) {
       const print = prints.find(p => p.id === pl.printId);
-      if (!print) return showNotification(`${SIDES.find(s => s.key === pl.side)?.label}: 프린트가 선택되지 않음`, 'error');
-      if (!print.analysis) return showNotification('아직 분석 중인 프린트가 있습니다', 'error');
+      if (!print) { showNotification(`${SIDES.find(s => s.key === pl.side)?.label}: 프린트가 선택되지 않음`, 'error'); return false; }
+      if (!print.analysis) { showNotification('아직 분석 중인 프린트가 있습니다', 'error'); return false; }
     }
+    return true;
+  };
 
-    // view별로 그 시점에서 보이는 placement들을 묶기 (primary + partial)
-    const viewJobs = [];
-    for (const view of VIEWS) {
-      const items = placements
-        .filter(pl => view.primaryIncludes.includes(pl.side) || view.partialIncludes.includes(pl.side))
-        .map(pl => {
-          const print = prints.find(p => p.id === pl.printId);
-          const visibility = view.primaryIncludes.includes(pl.side) ? 'full' : 'partial';
-          return { placement: pl, printImages: print.images, printType: print.analysis.type, visibility };
-        });
-      // 어떤 형태로든 placement가 보이면 view 생성 (소매만 있어도 partial로 표시)
-      if (items.length > 0) viewJobs.push({ view, items });
+  // 단일 view (정면 or 후면) 합성
+  const composeOneView = async (viewKey) => {
+    if (!validateCompose()) return;
+    const view = VIEWS.find(v => v.key === viewKey);
+    if (!view) return;
+
+    const items = placements
+      .filter(pl => view.primaryIncludes.includes(pl.side) || view.partialIncludes.includes(pl.side))
+      .map(pl => {
+        const print = prints.find(p => p.id === pl.printId);
+        const visibility = view.primaryIncludes.includes(pl.side) ? 'full' : 'partial';
+        return { placement: pl, printImages: print.images, printType: print.analysis.type, visibility };
+      });
+    if (items.length === 0) {
+      showNotification(`${view.label}에 합성할 placement가 없습니다`, 'error');
+      return;
     }
-    if (viewJobs.length === 0) return showNotification('합성할 view가 없습니다', 'error');
 
     setIsComposing(true);
-    const initial = {};
-    viewJobs.forEach(({ view }) => { initial[view.key] = { status: 'pending' }; });
-    setResults(initial);
+    setResults(r => ({ ...r, [view.key]: { status: 'pending' } }));
+    try {
+      const dataUrl = await composeView({
+        apiKey,
+        productImageDataUrl: productImage,
+        items,
+        viewLabel: view.label,
+        viewInstruction: view.viewInstruction,
+        extraPrompt,
+      });
+      setResults(r => ({ ...r, [view.key]: { status: 'done', dataUrl } }));
+      showNotification(`${view.label} 합성 완료`);
+    } catch (e) {
+      setResults(r => ({ ...r, [view.key]: { status: 'error', error: e.message } }));
+      showNotification(`${view.label} 합성 실패`, 'error');
+    } finally {
+      setIsComposing(false);
+    }
+  };
 
-    await Promise.all(viewJobs.map(async ({ view, items }) => {
-      try {
-        const dataUrl = await composeView({
-          apiKey,
-          productImageDataUrl: productImage,
-          items,
-          viewLabel: view.label,
-          viewInstruction: view.viewInstruction,
-          extraPrompt,
-        });
-        setResults(r => ({ ...r, [view.key]: { status: 'done', dataUrl } }));
-      } catch (e) {
-        setResults(r => ({ ...r, [view.key]: { status: 'error', error: e.message } }));
-      }
-    }));
+  // 디테일 자동 생성 (프린트 풀 기반)
+  const composeDetailShots = async () => {
+    if (!apiKey) { showNotification('API Key를 먼저 설정하세요', 'error'); return; }
+    if (prints.length === 0) { showNotification('프린트를 1개 이상 업로드하세요', 'error'); return; }
+    for (const p of prints) {
+      if (!p.analysis) { showNotification('아직 분석 중인 프린트가 있습니다', 'error'); return; }
+    }
 
-    // 디테일 클로즈업 자동 생성 — 프린트 풀의 추가 참고 사진(가까이서) 우선, 없으면 메인 사용
     const detailSources = [];
     prints.forEach(p => p.images.slice(1).forEach(img => detailSources.push({ img, type: p.analysis?.type })));
     prints.forEach(p => detailSources.push({ img: p.images[0], type: p.analysis?.type }));
     const detailJobs = detailSources.slice(0, 2);
+    if (detailJobs.length === 0) return;
 
-    if (detailJobs.length > 0) {
-      const initial = { d1: null, d2: null };
-      detailJobs.forEach((_, i) => { initial[i === 0 ? 'd1' : 'd2'] = { status: 'pending' }; });
-      setDetailShotResults(initial);
+    setIsComposing(true);
+    const initial = { d1: null, d2: null };
+    detailJobs.forEach((_, i) => { initial[i === 0 ? 'd1' : 'd2'] = { status: 'pending' }; });
+    setDetailShotResults(initial);
 
-      await Promise.all(detailJobs.map(async ({ img, type }, i) => {
-        const slot = i === 0 ? 'd1' : 'd2';
-        try {
-          const dataUrl = await composeDetail({ apiKey, sourceImage: img, printType: type });
-          setDetailShotResults(r => ({ ...r, [slot]: { status: 'done', dataUrl } }));
-        } catch (e) {
-          setDetailShotResults(r => ({ ...r, [slot]: { status: 'error', error: e.message } }));
-        }
-      }));
-    }
+    await Promise.all(detailJobs.map(async ({ img, type }, i) => {
+      const slot = i === 0 ? 'd1' : 'd2';
+      try {
+        const dataUrl = await composeDetail({ apiKey, sourceImage: img, printType: type });
+        setDetailShotResults(r => ({ ...r, [slot]: { status: 'done', dataUrl } }));
+      } catch (e) {
+        setDetailShotResults(r => ({ ...r, [slot]: { status: 'error', error: e.message } }));
+      }
+    }));
 
     setIsComposing(false);
-    showNotification('합성 완료');
+    showNotification('디테일 생성 완료');
   };
 
   const downloadResult = (side, dataUrl) => {
@@ -821,10 +843,11 @@ export default function App() {
               <ImageDropZone
                 value={null}
                 onChange={addPrint}
-                label="프린트 추가"
+                label="프린트 추가 (드래그 다중 가능)"
                 icon={LucidePlus}
+                multiple
               />
-              <p className="text-[10px] text-gray-400 mt-2">여러 장 업로드 가능 · 자동 분석</p>
+              <p className="text-[10px] text-gray-400 mt-2">여러 장 한꺼번에 드래그 OK · 각각 자동 분석</p>
             </div>
           </div>
         </section>
@@ -839,62 +862,52 @@ export default function App() {
               <p>프린트를 업로드하면<br />여기에 분석 결과와 배치 옵션이 표시됩니다</p>
             </div>
           ) : (
-            <div className="space-y-4">
-              {/* Analysis cards (per print) */}
-              <div className="space-y-2">
+            <div className="space-y-3">
+              {/* 컴팩트 분석 행 — 프린트별 1줄 (썸네일 + 종류 셀렉트 + 참고사진 +) */}
+              <div className="space-y-1.5">
                 {prints.map((p, idx) => (
-                  <div key={p.id} className="border border-black p-3 bg-white">
-                    <div className="flex items-start gap-3">
-                      <div className="w-14 h-14 border border-gray-200 shrink-0 overflow-hidden bg-gray-50">
+                  <details key={p.id} className="border border-gray-200 bg-white open:border-black">
+                    <summary className="flex items-center gap-2 p-2 cursor-pointer list-none hover:bg-gray-50">
+                      <div className="w-9 h-9 border border-gray-200 shrink-0 overflow-hidden bg-gray-50">
                         <img src={p.images[0]} alt="" className="w-full h-full object-contain" />
                       </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center justify-between mb-1">
-                          <span className="text-[11px] font-bold uppercase tracking-wider">프린트 #{idx + 1}</span>
-                          <div className="flex items-center gap-1">
-                            <button onClick={() => reanalyzePrint(p.id)} disabled={p.analyzing}
-                              className="p-1 hover:bg-gray-100 disabled:opacity-30" title="다시 분석">
-                              <LucideRefreshCw className={`w-3.5 h-3.5 ${p.analyzing ? 'animate-spin' : ''}`} />
-                            </button>
-                            <button onClick={() => removePrint(p.id)}
-                              className="p-1 hover:bg-gray-100 text-gray-400 hover:text-black" title="삭제">
-                              <LucideTrash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        </div>
-                        {p.analyzing ? (
-                          <div className="flex items-center gap-2 text-xs text-gray-500">
-                            <LucideLoader2 className="w-3.5 h-3.5 animate-spin" />
-                            <span>분석 중...</span>
-                          </div>
-                        ) : p.error ? (
-                          <div className="text-xs text-red-600">{p.error}</div>
-                        ) : p.analysis ? (
-                          <div>
-                            <select value={p.analysis.type}
-                              onChange={(e) => updatePrintType(p.id, e.target.value)}
-                              className="text-xs border border-gray-300 px-2 py-1 w-full focus:outline-none focus:border-black">
-                              {PRINT_TYPES.map(t => (
-                                <option key={t.value} value={t.value}>{t.label}</option>
-                              ))}
-                            </select>
-                            {p.analysis.notes && (
-                              <p className="text-[10px] text-gray-500 mt-1 leading-relaxed line-clamp-2">{p.analysis.notes}</p>
-                            )}
-                          </div>
-                        ) : null}
+                      <span className="text-[11px] font-bold uppercase tracking-wider shrink-0">#{idx + 1}</span>
+                      {p.analyzing ? (
+                        <span className="text-xs text-gray-500 flex items-center gap-1"><LucideLoader2 className="w-3 h-3 animate-spin" /> 분석 중...</span>
+                      ) : p.error ? (
+                        <span className="text-xs text-red-600 truncate">{p.error}</span>
+                      ) : p.analysis ? (
+                        <select value={p.analysis.type}
+                          onClick={(e) => e.stopPropagation()}
+                          onChange={(e) => updatePrintType(p.id, e.target.value)}
+                          className="text-xs border border-gray-300 px-2 py-1 focus:outline-none focus:border-black">
+                          {PRINT_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+                        </select>
+                      ) : null}
+                      {p.images.length > 1 && (
+                        <span className="text-[10px] text-gray-400 ml-1">참고 +{p.images.length - 1}</span>
+                      )}
+                      <div className="ml-auto flex items-center gap-1">
+                        <button onClick={(e) => { e.stopPropagation(); reanalyzePrint(p.id); }} disabled={p.analyzing}
+                          className="p-1 hover:bg-gray-100 disabled:opacity-30" title="다시 분석">
+                          <LucideRefreshCw className={`w-3.5 h-3.5 ${p.analyzing ? 'animate-spin' : ''}`} />
+                        </button>
+                        <button onClick={(e) => { e.stopPropagation(); removePrint(p.id); }}
+                          className="p-1 hover:bg-gray-100 text-gray-400 hover:text-black" title="삭제">
+                          <LucideTrash2 className="w-3.5 h-3.5" />
+                        </button>
                       </div>
-                    </div>
-
-                    {/* Reference images: 멀리서/가까이서 등 추가 참고 사진 */}
-                    <div className="border-t border-gray-200 mt-3 pt-3">
-                      <div className="flex items-center justify-between mb-2">
+                    </summary>
+                    <div className="border-t border-gray-200 p-2 bg-gray-50">
+                      {p.analysis?.notes && (
+                        <p className="text-[10px] text-gray-600 leading-relaxed mb-2">{p.analysis.notes}</p>
+                      )}
+                      <div className="flex items-center justify-between mb-1.5">
                         <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400">참고 사진 ({p.images.length}장)</span>
-                        <span className="text-[10px] text-gray-400">멀리서·가까이서 등 여러 장 권장</span>
                       </div>
                       <div className="flex gap-1.5 flex-wrap">
                         {p.images.map((img, imgIdx) => (
-                          <div key={imgIdx} className="relative group w-14 h-14 border border-gray-300 bg-gray-50 overflow-hidden">
+                          <div key={imgIdx} className="relative group w-12 h-12 border border-gray-300 bg-white overflow-hidden">
                             <img src={img} alt="" className="w-full h-full object-contain" />
                             <div className="absolute top-0 left-0 bg-black text-white text-[8px] font-bold px-0.5">
                               {imgIdx === 0 ? '메인' : imgIdx + 1}
@@ -907,23 +920,23 @@ export default function App() {
                             )}
                           </div>
                         ))}
-                        <div className="w-14 h-14">
+                        <div className="w-12 h-12">
                           <ImageDropZone
                             value={null}
                             onChange={addPrintRef(p.id)}
-                            label="+ 추가"
+                            label="+"
                             icon={LucidePlus}
+                            multiple
                           />
                         </div>
                       </div>
                     </div>
-                  </div>
+                  </details>
                 ))}
               </div>
 
-              {/* Placement cards */}
+              {/* 위치 / 크기 — 분리 헤더 없이 바로 카드 */}
               <div>
-                <div className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-2">위치 / 크기</div>
                 <div className="grid grid-cols-2 gap-2">
                   {SIDES.map(side => {
                     const placement = placements.find(pl => pl.side === side.key);
@@ -1003,12 +1016,34 @@ export default function App() {
             <p className="text-[10px] text-gray-400 mt-1">크기/위치 미세조정, 재질 디테일 등 자유 서술. JSON spec의 user_extra_instructions로 들어감.</p>
           </div>
 
+          <div className="grid grid-cols-2 gap-2 mt-3">
+            <button
+              onClick={() => composeOneView('front_view')}
+              disabled={isComposing || prints.length === 0 || placements.length === 0}
+              className="py-3 bg-black text-white text-xs font-bold uppercase tracking-wider disabled:opacity-30 hover:bg-gray-800 flex items-center justify-center gap-1.5"
+            >
+              {isComposing && results.front_view?.status === 'pending'
+                ? <><LucideLoader2 className="w-3.5 h-3.5 animate-spin" /> 앞면 중...</>
+                : <><LucideWand2 className="w-3.5 h-3.5" /> 앞면 합성</>}
+            </button>
+            <button
+              onClick={() => composeOneView('back_view')}
+              disabled={isComposing || prints.length === 0 || placements.length === 0}
+              className="py-3 bg-black text-white text-xs font-bold uppercase tracking-wider disabled:opacity-30 hover:bg-gray-800 flex items-center justify-center gap-1.5"
+            >
+              {isComposing && results.back_view?.status === 'pending'
+                ? <><LucideLoader2 className="w-3.5 h-3.5 animate-spin" /> 뒷면 중...</>
+                : <><LucideWand2 className="w-3.5 h-3.5" /> 뒷면 합성</>}
+            </button>
+          </div>
           <button
-            onClick={handleCompose}
-            disabled={isComposing || prints.length === 0 || placements.length === 0}
-            className="w-full mt-3 py-3 bg-black text-white text-sm font-bold uppercase tracking-wider disabled:opacity-30 hover:bg-gray-800 flex items-center justify-center gap-2"
+            onClick={composeDetailShots}
+            disabled={isComposing || prints.length === 0}
+            className="w-full mt-2 py-2.5 border border-black text-black text-xs font-bold uppercase tracking-wider disabled:opacity-30 hover:bg-black hover:text-white flex items-center justify-center gap-1.5"
           >
-            {isComposing ? <><LucideLoader2 className="w-4 h-4 animate-spin" /> 합성 중...</> : <><LucideWand2 className="w-4 h-4" /> 합성 생성</>}
+            {isComposing && (detailShotResults.d1?.status === 'pending' || detailShotResults.d2?.status === 'pending')
+              ? <><LucideLoader2 className="w-3.5 h-3.5 animate-spin" /> 디테일 중...</>
+              : <><LucideImage className="w-3.5 h-3.5" /> 디테일 생성</>}
           </button>
         </section>
 
