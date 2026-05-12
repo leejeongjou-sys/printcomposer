@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   LucideStamp, LucideUploadCloud, LucideImage, LucideWand2,
   LucideShirt, LucideSettings, LucideKey, LucideDownload,
@@ -428,7 +428,7 @@ const ImageDropZone = ({ value, onChange, label, icon: Icon, height = 'aspect-sq
 
 // ==================== DETAIL PAGE ====================
 const CATEGORY_PRESETS = ['집업', '후드', '맨투맨', '긴팔', '반팔'];
-const PRINT_TYPE_PRESETS = ['나염', '자수'];
+const PRINT_TYPE_PRESETS = ['나염', '자수', '나염/자수'];
 const COLOR_PRESETS = ['블랙', '화이트', '그레이'];
 
 const DETAIL_PAGE_DEFAULTS = {
@@ -441,8 +441,19 @@ const DETAIL_PAGE_DEFAULTS = {
 
 // 프리셋 + 직접입력 셀렉트
 const PresetSelect = ({ value, onChange, options, placeholder, label }) => {
-  const isCustom = value !== '' && !options.includes(value);
-  const selectValue = isCustom ? '__custom' : value;
+  const valueMatchesPreset = options.includes(value);
+  // 직접입력 모드를 명시적으로 추적 — 사용자가 선택한 즉시 input이 떠야 함 (값이 비어 있어도)
+  const [customMode, setCustomMode] = useState(!valueMatchesPreset && value !== '');
+
+  // 외부에서 value가 프리셋으로 바뀌면 커스텀 모드 해제
+  useEffect(() => {
+    if (valueMatchesPreset) setCustomMode(false);
+    else if (value !== '') setCustomMode(true);
+  }, [value, valueMatchesPreset]);
+
+  const showCustom = customMode || (!valueMatchesPreset && value !== '');
+  const selectValue = showCustom ? '__custom' : value;
+
   return (
     <div className="space-y-1">
       <label className="text-[10px] text-gray-500 block mb-0.5">{label}</label>
@@ -450,8 +461,10 @@ const PresetSelect = ({ value, onChange, options, placeholder, label }) => {
         value={selectValue}
         onChange={(e) => {
           if (e.target.value === '__custom') {
-            if (!isCustom) onChange('');
+            setCustomMode(true);
+            if (valueMatchesPreset) onChange('');
           } else {
+            setCustomMode(false);
             onChange(e.target.value);
           }
         }}
@@ -460,7 +473,7 @@ const PresetSelect = ({ value, onChange, options, placeholder, label }) => {
         {options.map(opt => <option key={opt} value={opt}>{opt}</option>)}
         <option value="__custom">직접입력</option>
       </select>
-      {isCustom && (
+      {showCustom && (
         <input
           type="text"
           value={value}
