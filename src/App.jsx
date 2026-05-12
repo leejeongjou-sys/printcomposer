@@ -210,13 +210,11 @@ ${PRINT_TYPES.map(t => `- ${t.value}: ${t.label} — ${t.desc}`).join('\n')}
   return parsed;
 };
 
-// items: [{ printImages: [...], printType, placement: { side, widthCm, offsetY, offsetX }, visibility }]
+// items: [{ printImages: [...], printType, placement: { side, widthPct, offsetY, offsetX }, visibility }]
 const composeView = async ({
-  apiKey, productImageDataUrl, items, chestCm, lengthCm,
+  apiKey, productImageDataUrl, items,
   viewLabel, viewInstruction, extraPrompt
 }) => {
-  const chestNum = Number(chestCm);
-
   // 모든 참고 이미지를 글로벌 번호로 매핑
   let globalIdx = 0;
   const placementsSpec = items.map((item, i) => {
@@ -226,8 +224,7 @@ const composeView = async ({
     const sideLabel = SIDES.find(s => s.key === placement.side)?.label || placement.side;
     const yLabel = OFFSET_Y_BY_SIDE[placement.side]?.find(o => o.value === placement.offsetY)?.label || '';
     const xLabel = OFFSET_X_BY_SIDE[placement.side]?.find(o => o.value === placement.offsetX)?.label || '';
-    const widthNum = Number(placement.widthCm);
-    const ratioPct = chestNum > 0 ? Math.round((widthNum / chestNum) * 100) : null;
+    const ratioPct = Math.round(Number(placement.widthPct));
 
     const orientationNote =
       placement.side === 'front' && placement.offsetX === 'left' ? '착용자 기준 왼쪽 가슴 = 보는 사람 기준 오른쪽 (좌측 가슴 로고 자리)' :
@@ -260,8 +257,7 @@ const composeView = async ({
         ...(orientationNote ? { orientation_note: orientationNote } : {}),
       },
       size: {
-        width_cm: widthNum,
-        ...(ratioPct ? { width_ratio_to_chest_pct: ratioPct } : {}),
+        width_pct_of_garment_width: ratioPct,
       },
       print: {
         type_key: printType,
@@ -282,10 +278,6 @@ const composeView = async ({
       product_image: '흰 배경의 제품 누끼(배경 제거된 컷). 3:4 비율로 패딩되어 있고 좌우 5% 여백이 이미 적용되어 있음.',
       print_images: '실제 제작된 프린트의 클로즈업 사진. 각 프린트의 색상/형태/질감/잉크 두께/실 결이 그대로 보임.',
     },
-    product: {
-      chest_cm: chestNum,
-      length_cm: Number(lengthCm),
-    },
     view: {
       key: viewLabel,
       instruction: viewInstruction,
@@ -301,7 +293,7 @@ const composeView = async ({
     must_apply: [
       '프린트는 [프린트 이미지 #N]에 보이는 색상/형태/질감/잉크특성을 그대로 옮길 것 (재해석/재생성/스타일화 금지)',
       '원단의 주름·음영·결이 프린트 위에 자연스럽게 반영',
-      '각 placement의 size.width_ratio_to_chest_pct 값을 픽셀 단위로 정확히 반영',
+      '각 placement의 size.width_pct_of_garment_width 값을 픽셀 단위로 정확히 반영 (의류 가로 폭의 X%)',
       '4K 화질, 디테일과 텍스처가 살아있도록',
     ],
     ...(extraPrompt && extraPrompt.trim() ? { user_extra_instructions: extraPrompt.trim() } : {}),
@@ -316,7 +308,7 @@ ${JSON.stringify(spec, null, 2)}
 해석 규칙:
 1. 각 placement의 \`image_refs\` 배열은 같은 프린트의 여러 참고 사진(메인 + 다른 시점/거리). 위치는 메인을 기준으로 잡되, 질감·잉크 특성·실 결 등 시각 디테일은 모든 참고 사진을 종합해서 정확히 재현할 것.
 2. 어떤 참고 사진의 시각 특성도 절대 변형/재해석하지 말고 그대로 옮길 것.
-3. \`size.width_ratio_to_chest_pct\`는 의류 가슴 단면 폭 대비 프린트 가로 폭의 % — 픽셀로 측정해서 정확히 일치시킬 것 (임의로 키우거나 줄이지 말 것).
+3. \`size.width_pct_of_garment_width\`는 의류 가로 폭 대비 프린트 가로 폭의 % — 화면에서 의류 폭을 측정하고 그 N%로 정확히 합성할 것 (임의로 키우거나 줄이지 말 것).
 4. \`visibility="partial"\`인 placement는 반드시 \`rendering_note\`의 지시를 따를 것.
 5. \`must_preserve\` 항목은 절대 수정 금지.
 6. 결과 이미지: \`output.aspect_ratio\` (3:4), \`output.horizontal_margin_pct\` (좌우 5% 흰 여백), \`output.resolution\` (4K).
@@ -457,9 +449,8 @@ const DetailPage = ({ meta, shots }) => (
 // ==================== APP ====================
 export default function App() {
   const [productImage, setProductImage] = useState(null);
-  const [productSize, setProductSize] = useState({ chest: '', length: '' });
   const [prints, setPrints] = useState([]); // [{ id, images: [dataUrl, ...], analysis, analyzing, error }]
-  const [placements, setPlacements] = useState([]); // [{ side, printId, widthCm, offsetY, offsetX }]
+  const [placements, setPlacements] = useState([]); // [{ side, printId, widthPct, offsetY, offsetX }]
   const [results, setResults] = useState({}); // { [side]: { status, dataUrl, error } }
   const [detailShotResults, setDetailShotResults] = useState({ d1: null, d2: null }); // 매거진 디테일 컷 (자동 생성)
   const [isComposing, setIsComposing] = useState(false);
@@ -537,9 +528,9 @@ export default function App() {
     setPlacements(prev => {
       const has = prev.find(pl => pl.side === side);
       if (has) return prev.filter(pl => pl.side !== side);
-      const defaultWidth = (side === 'left_sleeve' || side === 'right_sleeve') ? 8 : 25;
+      const defaultWidth = (side === 'left_sleeve' || side === 'right_sleeve') ? 12 : 30;
       const defaultPrintId = prints[0]?.id || null;
-      return [...prev, { side, printId: defaultPrintId, widthCm: defaultWidth, offsetY: 'center', offsetX: 'center' }];
+      return [...prev, { side, printId: defaultPrintId, widthPct: defaultWidth, offsetY: 'center', offsetX: 'center' }];
     });
   };
 
@@ -551,7 +542,6 @@ export default function App() {
   const handleCompose = async () => {
     if (!apiKey) return showNotification('API Key를 먼저 설정하세요', 'error');
     if (!productImage) return showNotification('제품컷을 업로드하세요', 'error');
-    if (!productSize.chest || !productSize.length) return showNotification('가슴/총장 사이즈를 입력하세요', 'error');
     if (prints.length === 0) return showNotification('프린트를 1개 이상 업로드하세요', 'error');
     if (placements.length === 0) return showNotification('배치할 위치를 선택하세요', 'error');
 
@@ -588,8 +578,6 @@ export default function App() {
           apiKey,
           productImageDataUrl: productImage,
           items,
-          chestCm: productSize.chest,
-          lengthCm: productSize.length,
           viewLabel: view.label,
           viewInstruction: view.viewInstruction,
           extraPrompt,
@@ -642,17 +630,24 @@ export default function App() {
   // ---------- detail page ----------
   const newSlotId = () => `slot_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
 
+  // 자동 채움 콘텐츠 빌드 (현재 합성 결과 기준)
+  const buildAutoFillShots = () => {
+    const initial = [];
+    const push = (src) => { if (src) initial.push({ id: newSlotId(), src }); };
+    push(results.front_view?.dataUrl);
+    push(results.back_view?.dataUrl);
+    push(prints[0]?.images?.[0]);
+    push(detailShotResults.d1?.dataUrl);
+    push(detailShotResults.d2?.dataUrl);
+    return initial;
+  };
+
   const openDetailPage = () => {
-    // 비어있고 합성 결과가 있으면 자동 채움. 사용자가 이미 슬롯을 추가했으면 유지.
-    if (detailShots.length === 0) {
-      const initial = [];
-      const push = (src) => { if (src) initial.push({ id: newSlotId(), src }); };
-      push(results.front_view?.dataUrl);
-      push(results.back_view?.dataUrl);
-      push(prints[0]?.images?.[0]);
-      push(detailShotResults.d1?.dataUrl);
-      push(detailShotResults.d2?.dataUrl);
-      // 자동 채울 게 없으면 빈 슬롯 1개로 시작
+    // 모든 슬롯이 비어있으면(또는 슬롯 자체가 없으면) 현재 합성 결과로 자동 채움.
+    // 사용자가 직접 업로드한 슬롯이 하나라도 있으면 유지.
+    const allEmpty = detailShots.length === 0 || detailShots.every(s => !s.src);
+    if (allEmpty) {
+      const initial = buildAutoFillShots();
       if (initial.length === 0) initial.push({ id: newSlotId(), src: null });
       setDetailShots(initial);
     }
@@ -661,6 +656,17 @@ export default function App() {
     const printLabel = PRINT_TYPES.find(t => t.value === firstAnalysisType)?.label;
     if (printLabel) setDetailMeta(m => ({ ...m, printType: printLabel }));
     setShowDetailPage(true);
+  };
+
+  // 합성 결과로 강제 재채움 (사용자 업로드 슬롯 모두 대체)
+  const refillDetailShotsFromResults = () => {
+    const initial = buildAutoFillShots();
+    if (initial.length === 0) {
+      showNotification('아직 합성 결과가 없습니다', 'error');
+      return;
+    }
+    setDetailShots(initial);
+    showNotification(`${initial.length}개 슬롯을 합성 결과로 채웠습니다`);
   };
 
   const addDetailShot = () => {
@@ -786,24 +792,6 @@ export default function App() {
                 padMode="3:4"
               />
               <p className="text-[10px] text-gray-400 mt-1">3:4 비율 + 좌우 5% 여백 자동 적용 · 누끼/배경 제거된 사진 권장</p>
-            </div>
-
-            <div>
-              <label className="text-[11px] font-bold uppercase tracking-wider mb-2 block">제품 사이즈 (cm)</label>
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <input type="number" placeholder="가슴" value={productSize.chest}
-                    onChange={(e) => setProductSize(p => ({ ...p, chest: e.target.value }))}
-                    className="w-full border border-black px-3 py-2 text-sm focus:outline-none focus:bg-gray-50" />
-                  <span className="text-[10px] text-gray-400 uppercase tracking-wider mt-1 block">가슴단면</span>
-                </div>
-                <div>
-                  <input type="number" placeholder="총장" value={productSize.length}
-                    onChange={(e) => setProductSize(p => ({ ...p, length: e.target.value }))}
-                    className="w-full border border-black px-3 py-2 text-sm focus:outline-none focus:bg-gray-50" />
-                  <span className="text-[10px] text-gray-400 uppercase tracking-wider mt-1 block">총장</span>
-                </div>
-              </div>
             </div>
 
             <div>
@@ -970,10 +958,10 @@ export default function App() {
                               </div>
                             </div>
                             <div className="flex items-center gap-2">
-                              <input type="number" value={placement.widthCm} min="1" max={isSleeve ? 15 : 60}
-                                onChange={(e) => updatePlacement(side.key, 'widthCm', Number(e.target.value))}
+                              <input type="number" value={placement.widthPct} min="1" max={isSleeve ? 30 : 80}
+                                onChange={(e) => updatePlacement(side.key, 'widthPct', Number(e.target.value))}
                                 className="w-16 border border-gray-300 px-2 py-1 text-xs focus:outline-none focus:border-black" />
-                              <span className="text-[11px] text-gray-500">cm 가로 (그래픽 실측)</span>
+                              <span className="text-[11px] text-gray-500">% (의류 가로폭 대비)</span>
                             </div>
                             <div>
                               <span className="text-[10px] text-gray-400 uppercase tracking-wider">세로</span>
@@ -1200,12 +1188,18 @@ export default function App() {
               </div>
 
               <div>
-                <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center justify-between mb-2 gap-1.5 flex-wrap">
                   <h3 className="text-[10px] font-bold uppercase tracking-wider text-gray-400">사진 슬롯 ({detailShots.length}장)</h3>
-                  <button onClick={addDetailShot}
-                    className="text-[10px] font-bold uppercase tracking-wider border border-black px-2 py-1 hover:bg-black hover:text-white flex items-center gap-1">
-                    <LucidePlus className="w-3 h-3" /> 슬롯 추가
-                  </button>
+                  <div className="flex gap-1.5">
+                    <button onClick={refillDetailShotsFromResults}
+                      className="text-[10px] font-bold uppercase tracking-wider border border-gray-300 text-gray-700 px-2 py-1 hover:bg-gray-100 flex items-center gap-1" title="현재 합성 결과로 슬롯 재구성">
+                      <LucideRefreshCw className="w-3 h-3" /> 다시 채우기
+                    </button>
+                    <button onClick={addDetailShot}
+                      className="text-[10px] font-bold uppercase tracking-wider border border-black px-2 py-1 hover:bg-black hover:text-white flex items-center gap-1">
+                      <LucidePlus className="w-3 h-3" /> 슬롯 추가
+                    </button>
+                  </div>
                 </div>
                 <div className="space-y-2">
                   {detailShots.map((slot, idx) => (
