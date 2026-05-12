@@ -4,23 +4,14 @@ import {
   LucideShirt, LucideSettings, LucideKey, LucideDownload,
   LucideCheckCircle, LucideXCircle, LucideLoader2,
   LucideTrash2, LucideRefreshCw, LucidePlus, LucideX,
-  LucideFileText
+  LucideFileText, LucideArrowUp, LucideArrowDown
 } from 'lucide-react';
 import html2canvas from 'html2canvas';
 
 // ==================== CONSTANTS ====================
 const PRINT_TYPES = [
-  { value: 'screen_print/standard',  label: '실크스크린 (일반)',     desc: '평평하고 불투명한 잉크 면, 살짝의 잉크 두께(0.1mm), 무광~반광' },
-  { value: 'screen_print/discharge', label: '디스차지 나염',          desc: '염료가 빠진 듯 부드러운 질감, 원단에 스며든 느낌, 두께감 거의 없음' },
-  { value: 'screen_print/puff',      label: '발포 나염',              desc: '2~3mm 양각으로 부풀어 오른 입체감, 둥근 가장자리, 무광 고무 재질감' },
-  { value: 'screen_print/glitter',   label: '글리터/포일',            desc: '금속 광택, 반사 하이라이트, 미세 글리터 입자감' },
-  { value: 'screen_print/water_base',label: '워터베이스 나염',        desc: '얇고 자연스러운 잉크, 원단 결이 비치는 듯한 부드러움' },
-  { value: 'screen_print/dtg_dtf',   label: 'DTG / DTF',              desc: '사진 같은 풀컬러 그라데이션, 매우 얇은 필름감, 사진 인쇄 느낌' },
-  { value: 'embroidery/flat',        label: '평자수',                  desc: '실 한 가닥 한 가닥의 결, 1mm 내외 입체감, 새틴 스티치 광택' },
-  { value: 'embroidery/3d',          label: '3D / 입체 자수',          desc: '폼 위에 자수, 3~5mm 두꺼운 입체, 또렷한 모서리' },
-  { value: 'embroidery/patch',       label: '와펜 / 패치',             desc: '별도 천에 자수 후 부착, 가장자리 오버록, 명확한 단차' },
-  { value: 'transfer/vinyl',         label: '열전사 비닐',             desc: '단색 비닐, 매끈한 표면, 또렷한 가장자리, 약간의 광택' },
-  { value: 'transfer/digital',       label: '디지털 전사',             desc: '풀컬러 사진, 매우 얇은 필름, 광택 약간' },
+  { value: 'screen_print', label: '나염', desc: '잉크가 원단 표면에 인쇄된 형태. 평평하거나 살짝 두께감 있는 잉크 면, 무광~반광 표면. 픽셀 수준의 또렷한 가장자리.' },
+  { value: 'embroidery',   label: '자수', desc: '실이 원단에 박혀 입체감을 만드는 형태. 실 한 가닥 한 가닥의 결과 새틴 스티치 광택, 1~3mm 입체, 가장자리에 실 마무리.' },
 ];
 
 const SIDES = [
@@ -214,7 +205,7 @@ ${PRINT_TYPES.map(t => `- ${t.value}: ${t.label} — ${t.desc}`).join('\n')}
   if (!match) throw new Error('분석 결과 파싱 실패');
   const parsed = JSON.parse(match[0]);
   if (!PRINT_TYPES.find(t => t.value === parsed.type)) {
-    parsed.type = 'screen_print/standard';
+    parsed.type = 'screen_print';
   }
   return parsed;
 };
@@ -350,19 +341,24 @@ ${JSON.stringify(spec, null, 2)}
   throw new Error(txtPart || '이미지가 생성되지 않았습니다');
 };
 
-// 프린트 참고 사진 → 매거진 스타일 깔끔한 디테일 클로즈업
+// 프린트 참고 사진 → 탑뷰 DSLR 소프트박스 디테일 컷
 const composeDetail = async ({ apiKey, sourceImage, printType }) => {
   const typeInfo = PRINT_TYPES.find(t => t.value === printType);
-  const prompt = `다음 [참고 이미지]는 의류에 적용된 프린트의 클로즈업 사진입니다.
-이를 바탕으로 매거진/룩북에 들어갈 수준의 깔끔한 디테일 클로즈업 사진을 새로 생성하세요.
+  const prompt = `다음 [참고 이미지]는 의류에 적용된 프린트(${typeInfo?.label || ''})의 클로즈업 사진입니다.
+이 프린트를 동일한 원단 위에 펼쳐 놓고 위에서 아래로 촬영한 듯한 디테일 사진을 새로 생성하세요.
 
-요구사항:
-- 1:1 정사각형 비율, 4K 고화질
-- 흰색 또는 매우 중립적인 원단 배경 (톤이 차분하고 산만하지 않게)
-- 부드러운 자연광 또는 스튜디오 조명, 그림자 최소화
-- 프린트의 텍스처/잉크/실 결에 선명한 초점 (가까이서 디테일이 또렷이 보이게)
-- 프린트의 시각 특성(색상/형태/질감/잉크 두께/실 결/광택)을 절대 변형하지 말 것 — 참고 이미지의 프린트 그대로 옮겨야 함
-- 컴포지션은 정돈된 매거진 느낌 (불필요한 요소·로고·텍스트 추가 금지)
+촬영 조건:
+- **시점**: 탑뷰 (카메라가 원단 바로 위에서 수직으로 내려다본 시점, 평면 정사각 프레이밍)
+- **카메라**: 풀프레임 DSLR + 매크로 렌즈 (f/8 정도, 전체적으로 또렷한 초점)
+- **조명**: 좌우 또는 상단에 소프트박스 1~2개 (부드럽고 균일한 빛, 강한 그림자 없음, 하이라이트도 절제됨)
+- **배경**: 프린트가 박힌 원단 자체. 원단의 결과 질감이 자연스럽게 보여야 함. 빈 흰 배경/스튜디오 사이클로라마 X.
+- **컴포지션**: 프린트가 프레임 중앙에 균형있게, 약간의 원단 여백 포함
+
+엄수 사항:
+- 프린트의 색상/형태/질감/잉크 두께/실 결/광택을 참고 이미지 그대로 보존. **절대 흰색으로 빛바래거나 색이 빠지면 안 됨.**
+- 원단 색상도 참고 이미지의 원래 색상 유지 (검정 후드면 검정 원단 위, 회색이면 회색 위 등). 흰 원단으로 바꾸지 말 것.
+- 프린트 외 다른 요소(로고/텍스트/배경 소품) 추가 금지
+- 1:1 정사각형 비율, 4K 고화질, 디테일·텍스처 살아있도록
 ${typeInfo ? `\n프린트 종류: ${typeInfo.label} — 시각 특성: ${typeInfo.desc}` : ''}`;
 
   const data = await callGemini({
@@ -426,68 +422,34 @@ const DETAIL_PAGE_DEFAULTS = {
   title: '',
   productName: '',
   category: '맨투맨',
-  printType: '실크스크린',
+  printType: '나염',
   color: '차콜',
-  date: new Date().toISOString().slice(0, 10).replace(/-/g, '.'),
 };
 
-// 5개 슬롯: 01 전체앞(3:4) / 02 전체뒤(3:4) / 03 프린트 클로즈업(3:2) / 04 디테일1(1:1) / 05 디테일2(1:1)
+// 동적 슬롯: shots는 [{ id, src }] 배열 (개수 무제한)
+// 모든 가운데 정렬은 text-align/inline-block 기반 (html2canvas 호환성)
 const DetailPage = ({ meta, shots }) => (
   <div id="detail-capture" style={{ width: 1000, background: '#ffffff', fontFamily: "'Inter','Noto Sans KR',system-ui,sans-serif", color: '#0a0a0a' }}>
     {/* HERO */}
     <section style={{ padding: '60px 56px 32px', textAlign: 'center' }}>
-      <div style={{ display: 'flex', justifyContent: 'center', gap: 8, marginBottom: 20, flexWrap: 'wrap' }}>
-        {meta.category && <span style={{ display: 'inline-flex', alignItems: 'center', padding: '6px 12px', borderRadius: 999, fontSize: 12, fontWeight: 500, color: '#fff', background: '#0a0a0a' }}>{meta.category}</span>}
-        {meta.printType && <span style={{ display: 'inline-flex', alignItems: 'center', padding: '6px 12px', borderRadius: 999, fontSize: 12, fontWeight: 500, color: '#3a3a3a', background: '#f6f6f4', border: '1px solid #e8e6e0' }}>{meta.printType}</span>}
-        {meta.color && <span style={{ display: 'inline-flex', alignItems: 'center', padding: '6px 12px', borderRadius: 999, fontSize: 12, fontWeight: 500, color: '#3a3a3a', background: '#f6f6f4', border: '1px solid #e8e6e0' }}>{meta.color}</span>}
+      <div style={{ marginBottom: 20, textAlign: 'center', fontSize: 0 }}>
+        {meta.category && <span style={{ display: 'inline-block', verticalAlign: 'middle', margin: '0 4px', padding: '6px 12px', borderRadius: 999, fontSize: 12, fontWeight: 500, color: '#fff', background: '#0a0a0a', lineHeight: 1.2 }}>{meta.category}</span>}
+        {meta.printType && <span style={{ display: 'inline-block', verticalAlign: 'middle', margin: '0 4px', padding: '6px 12px', borderRadius: 999, fontSize: 12, fontWeight: 500, color: '#3a3a3a', background: '#f6f6f4', border: '1px solid #e8e6e0', lineHeight: 1.2 }}>{meta.printType}</span>}
+        {meta.color && <span style={{ display: 'inline-block', verticalAlign: 'middle', margin: '0 4px', padding: '6px 12px', borderRadius: 999, fontSize: 12, fontWeight: 500, color: '#3a3a3a', background: '#f6f6f4', border: '1px solid #e8e6e0', lineHeight: 1.2 }}>{meta.color}</span>}
       </div>
-      <h1 style={{ fontSize: 54, lineHeight: 1.05, letterSpacing: '-0.03em', fontWeight: 700, marginBottom: 18 }}>{meta.title || '제목 없음'}</h1>
-      <div style={{ fontSize: 14, color: '#8a8a8a', display: 'flex', justifyContent: 'center', gap: 16, flexWrap: 'wrap', marginTop: 8 }}>
-        <span>주문제작</span>
-        <span style={{ width: 3, height: 3, background: '#8a8a8a', borderRadius: '50%', alignSelf: 'center' }} />
-        <span>{meta.date}</span>
-        {meta.productName && <>
-          <span style={{ width: 3, height: 3, background: '#8a8a8a', borderRadius: '50%', alignSelf: 'center' }} />
-          <span>{meta.productName}</span>
-        </>}
-      </div>
+      <h1 style={{ fontSize: 54, lineHeight: 1.05, letterSpacing: '-0.03em', fontWeight: 700, marginBottom: meta.productName ? 12 : 0, textAlign: 'center' }}>{meta.title || '제목 없음'}</h1>
+      {meta.productName && (
+        <div style={{ fontSize: 14, color: '#8a8a8a', textAlign: 'center', marginTop: 4 }}>{meta.productName}</div>
+      )}
     </section>
 
     {/* PHOTOS */}
-    <section style={{ padding: '24px 56px 0' }}>
-      {[
-        { num: '01', label: '전체컷 · 앞', src: shots.shot01, aspect: '3/4' },
-        { num: '02', label: '전체컷 · 뒤', src: shots.shot02, aspect: '3/4' },
-        { num: '03', label: '프린트 · 클로즈업', src: shots.shot03, aspect: '3/2' },
-        { num: '04', label: '디테일 · 네크라인', src: shots.shot04, aspect: '1/1' },
-        { num: '05', label: '디테일 · 라벨', src: shots.shot05, aspect: '1/1' },
-      ].filter(s => s.src).map(s => (
-        <div key={s.num} style={{ position: 'relative', borderRadius: 14, overflow: 'hidden', marginBottom: 20, background: '#f6f6f4' }}>
-          <div style={{ aspectRatio: s.aspect, width: '100%', position: 'relative', overflow: 'hidden' }}>
-            <img src={s.src} alt={s.label} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
-          </div>
-          <span style={{ position: 'absolute', top: 22, left: 22, background: 'rgba(255,255,255,0.92)', padding: '10px 18px', borderRadius: 999, fontSize: 17, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', color: '#0a0a0a' }}>{s.label}</span>
-          <span style={{ position: 'absolute', top: 22, right: 22, background: 'rgba(0,0,0,0.55)', width: 50, height: 50, borderRadius: '50%', color: '#fff', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, fontWeight: 600 }}>{s.num}</span>
+    <section style={{ padding: '24px 56px 60px' }}>
+      {shots.filter(s => s.src).map(s => (
+        <div key={s.id} style={{ borderRadius: 14, overflow: 'hidden', marginBottom: 20, background: '#f6f6f4' }}>
+          <img src={s.src} alt="" style={{ width: '100%', height: 'auto', display: 'block' }} />
         </div>
       ))}
-    </section>
-
-    {/* INFO STRIP */}
-    <section style={{ padding: '32px 56px 60px' }}>
-      <div style={{ background: '#f6f6f4', border: '1px solid #e8e6e0', borderRadius: 14, padding: 28, display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 20 }}>
-        <div>
-          <h5 style={{ fontSize: 11, color: '#8a8a8a', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 8 }}>품목</h5>
-          <p style={{ fontSize: 15, fontWeight: 600 }}>{meta.title || '-'}</p>
-        </div>
-        <div>
-          <h5 style={{ fontSize: 11, color: '#8a8a8a', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 8 }}>등록일</h5>
-          <p style={{ fontSize: 15, fontWeight: 600 }}>{meta.date}</p>
-        </div>
-        <div>
-          <h5 style={{ fontSize: 11, color: '#8a8a8a', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 8 }}>제품명</h5>
-          <p style={{ fontSize: 15, fontWeight: 600 }}>{meta.productName || '-'}</p>
-        </div>
-      </div>
     </section>
   </div>
 );
@@ -504,7 +466,7 @@ export default function App() {
   const [extraPrompt, setExtraPrompt] = useState('');
   const [showDetailPage, setShowDetailPage] = useState(false);
   const [detailMeta, setDetailMeta] = useState(DETAIL_PAGE_DEFAULTS);
-  const [detailShots, setDetailShots] = useState({ shot01: null, shot02: null, shot03: null, shot04: null, shot05: null });
+  const [detailShots, setDetailShots] = useState([]); // [{ id, src }] 동적 슬롯
   const [isCapturing, setIsCapturing] = useState(false);
   const [notification, setNotification] = useState(null);
   const [apiKey, setApiKey] = useState(() => localStorage.getItem('print_composer_api_key') || '');
@@ -678,26 +640,51 @@ export default function App() {
   };
 
   // ---------- detail page ----------
+  const newSlotId = () => `slot_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+
   const openDetailPage = () => {
-    setDetailShots(prev => ({
-      ...prev,
-      shot01: results.front_view?.dataUrl || prev.shot01,
-      shot02: results.back_view?.dataUrl || prev.shot02,
-      shot03: prints[0]?.images?.[0] || prev.shot03,
-      shot04: detailShotResults.d1?.dataUrl || prev.shot04,
-      shot05: detailShotResults.d2?.dataUrl || prev.shot05,
-    }));
-    // 분석 결과로부터 프린트 종류 라벨 자동 추정
+    // 비어있고 합성 결과가 있으면 자동 채움. 사용자가 이미 슬롯을 추가했으면 유지.
+    if (detailShots.length === 0) {
+      const initial = [];
+      const push = (src) => { if (src) initial.push({ id: newSlotId(), src }); };
+      push(results.front_view?.dataUrl);
+      push(results.back_view?.dataUrl);
+      push(prints[0]?.images?.[0]);
+      push(detailShotResults.d1?.dataUrl);
+      push(detailShotResults.d2?.dataUrl);
+      // 자동 채울 게 없으면 빈 슬롯 1개로 시작
+      if (initial.length === 0) initial.push({ id: newSlotId(), src: null });
+      setDetailShots(initial);
+    }
+    // 프린트 종류 라벨 자동 추정
     const firstAnalysisType = prints[0]?.analysis?.type;
     const printLabel = PRINT_TYPES.find(t => t.value === firstAnalysisType)?.label;
-    if (printLabel) {
-      setDetailMeta(m => ({ ...m, printType: printLabel.split(' ')[0] }));
-    }
+    if (printLabel) setDetailMeta(m => ({ ...m, printType: printLabel }));
     setShowDetailPage(true);
   };
 
-  const updateDetailShot = (key) => async (dataUrl) => {
-    setDetailShots(prev => ({ ...prev, [key]: dataUrl }));
+  const addDetailShot = () => {
+    setDetailShots(prev => [...prev, { id: newSlotId(), src: null }]);
+  };
+
+  const updateDetailShot = (id) => async (dataUrl) => {
+    setDetailShots(prev => prev.map(s => s.id === id ? { ...s, src: dataUrl } : s));
+  };
+
+  const removeDetailShot = (id) => {
+    setDetailShots(prev => prev.filter(s => s.id !== id));
+  };
+
+  const moveDetailShot = (id, direction) => {
+    setDetailShots(prev => {
+      const idx = prev.findIndex(s => s.id === id);
+      if (idx < 0) return prev;
+      const newIdx = direction === 'up' ? idx - 1 : idx + 1;
+      if (newIdx < 0 || newIdx >= prev.length) return prev;
+      const next = [...prev];
+      [next[idx], next[newIdx]] = [next[newIdx], next[idx]];
+      return next;
+    });
   };
 
   const captureDetailPage = async (format) => {
@@ -761,15 +748,24 @@ export default function App() {
           <span className="font-extrabold text-xl tracking-tighter uppercase">Print Composer</span>
           <span className="text-xs text-gray-500 uppercase tracking-wider hidden md:inline">제품컷에 프린트 합성</span>
         </div>
-        <button
-          onClick={() => setShowSettings(true)}
-          className={`flex items-center gap-2 px-3 py-1.5 text-xs font-bold border rounded-full transition-colors ${
-            apiKey ? 'bg-black text-white border-black' : 'bg-gray-100 text-gray-500 border-gray-200 hover:bg-gray-200 hover:text-black'
-          }`}
-        >
-          <LucideKey className="w-3 h-3" />
-          <span>{apiKey ? 'API Key 설정됨' : 'API Key 설정'}</span>
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={openDetailPage}
+            className="flex items-center gap-2 px-3 py-1.5 text-xs font-bold border border-black rounded-full hover:bg-black hover:text-white transition-colors"
+          >
+            <LucideFileText className="w-3 h-3" />
+            <span>상세페이지</span>
+          </button>
+          <button
+            onClick={() => setShowSettings(true)}
+            className={`flex items-center gap-2 px-3 py-1.5 text-xs font-bold border rounded-full transition-colors ${
+              apiKey ? 'bg-black text-white border-black' : 'bg-gray-100 text-gray-500 border-gray-200 hover:bg-gray-200 hover:text-black'
+            }`}
+          >
+            <LucideKey className="w-3 h-3" />
+            <span>{apiKey ? 'API Key 설정됨' : 'API Key 설정'}</span>
+          </button>
+        </div>
       </header>
 
       {/* Main 3-column layout */}
@@ -1193,54 +1189,57 @@ export default function App() {
                         className="w-full border border-gray-300 px-2 py-1.5 text-xs focus:outline-none focus:border-black" />
                     </div>
                   </div>
-                  <div className="grid grid-cols-2 gap-1.5">
-                    <div>
-                      <label className="text-[10px] text-gray-500 block mb-0.5">등록일</label>
-                      <input type="text" value={detailMeta.date}
-                        onChange={(e) => setDetailMeta(m => ({ ...m, date: e.target.value }))}
-                        className="w-full border border-gray-300 px-2 py-1.5 text-xs focus:outline-none focus:border-black" />
-                    </div>
-                    <div>
-                      <label className="text-[10px] text-gray-500 block mb-0.5">제품명</label>
-                      <input type="text" value={detailMeta.productName}
-                        onChange={(e) => setDetailMeta(m => ({ ...m, productName: e.target.value }))}
-                        placeholder="예) FP-142"
-                        className="w-full border border-gray-300 px-2 py-1.5 text-xs focus:outline-none focus:border-black" />
-                    </div>
+                  <div>
+                    <label className="text-[10px] text-gray-500 block mb-0.5">제품명 (선택)</label>
+                    <input type="text" value={detailMeta.productName}
+                      onChange={(e) => setDetailMeta(m => ({ ...m, productName: e.target.value }))}
+                      placeholder="예) FP-142"
+                      className="w-full border border-gray-300 px-2 py-1.5 text-xs focus:outline-none focus:border-black" />
                   </div>
                 </div>
               </div>
 
               <div>
-                <h3 className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-2">사진 슬롯 (5장)</h3>
-                <div className="space-y-3">
-                  {[
-                    { key: 'shot01', label: '01 전체컷 · 앞', auto: '정면 결과' },
-                    { key: 'shot02', label: '02 전체컷 · 뒤', auto: '후면 결과' },
-                    { key: 'shot03', label: '03 프린트 클로즈업', auto: '프린트 #1' },
-                    { key: 'shot04', label: '04 디테일 (네크라인 등)', auto: null },
-                    { key: 'shot05', label: '05 디테일 (라벨 등)', auto: null },
-                  ].map(slot => (
-                    <div key={slot.key}>
-                      <label className="text-[10px] text-gray-500 mb-1 flex items-center justify-between">
-                        <span>{slot.label}</span>
-                        {detailShots[slot.key] && <button onClick={() => setDetailShots(p => ({ ...p, [slot.key]: null }))} className="text-gray-400 hover:text-black"><LucideX className="w-3 h-3" /></button>}
-                      </label>
-                      <div className="flex items-start gap-2">
-                        <div className="w-20 shrink-0">
-                          <ImageDropZone
-                            value={detailShots[slot.key]}
-                            onChange={updateDetailShot(slot.key)}
-                            label="업로드"
-                            icon={LucideUploadCloud}
-                          />
-                        </div>
-                        {!detailShots[slot.key] && slot.auto && (
-                          <span className="text-[10px] text-gray-400 leading-tight pt-1">자동 채움: {slot.auto}<br />또는 좌측 슬롯에 직접 업로드</span>
-                        )}
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="text-[10px] font-bold uppercase tracking-wider text-gray-400">사진 슬롯 ({detailShots.length}장)</h3>
+                  <button onClick={addDetailShot}
+                    className="text-[10px] font-bold uppercase tracking-wider border border-black px-2 py-1 hover:bg-black hover:text-white flex items-center gap-1">
+                    <LucidePlus className="w-3 h-3" /> 슬롯 추가
+                  </button>
+                </div>
+                <div className="space-y-2">
+                  {detailShots.map((slot, idx) => (
+                    <div key={slot.id} className="flex items-start gap-2 p-2 border border-gray-200 bg-white">
+                      <span className="text-[10px] text-gray-400 font-bold pt-1 w-5">{idx + 1}</span>
+                      <div className="w-20 shrink-0">
+                        <ImageDropZone
+                          value={slot.src}
+                          onChange={updateDetailShot(slot.id)}
+                          label="업로드"
+                          icon={LucideUploadCloud}
+                        />
+                      </div>
+                      <div className="flex flex-col gap-0.5 ml-auto">
+                        <button onClick={() => moveDetailShot(slot.id, 'up')} disabled={idx === 0}
+                          className="p-1 hover:bg-gray-100 disabled:opacity-30" title="위로">
+                          <LucideArrowUp className="w-3 h-3" />
+                        </button>
+                        <button onClick={() => moveDetailShot(slot.id, 'down')} disabled={idx === detailShots.length - 1}
+                          className="p-1 hover:bg-gray-100 disabled:opacity-30" title="아래로">
+                          <LucideArrowDown className="w-3 h-3" />
+                        </button>
+                        <button onClick={() => removeDetailShot(slot.id)}
+                          className="p-1 hover:bg-gray-100 text-gray-400 hover:text-black" title="슬롯 삭제">
+                          <LucideTrash2 className="w-3 h-3" />
+                        </button>
                       </div>
                     </div>
                   ))}
+                  {detailShots.length === 0 && (
+                    <div className="text-xs text-gray-400 text-center py-4 border border-dashed border-gray-200">
+                      슬롯이 없습니다. 위 "슬롯 추가" 클릭
+                    </div>
+                  )}
                 </div>
               </div>
             </aside>
