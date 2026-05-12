@@ -425,9 +425,9 @@ const DetailPage = ({ meta, shots }) => (
     {/* HERO */}
     <section style={{ padding: '60px 56px 32px', textAlign: 'center' }}>
       <div style={{ marginBottom: 20, textAlign: 'center', fontSize: 0 }}>
-        {meta.category && <span style={{ display: 'inline-block', verticalAlign: 'middle', margin: '0 4px', padding: '6px 12px', borderRadius: 999, fontSize: 12, fontWeight: 500, color: '#fff', background: '#0a0a0a', lineHeight: 1.2 }}>{meta.category}</span>}
-        {meta.printType && <span style={{ display: 'inline-block', verticalAlign: 'middle', margin: '0 4px', padding: '6px 12px', borderRadius: 999, fontSize: 12, fontWeight: 500, color: '#3a3a3a', background: '#f6f6f4', border: '1px solid #e8e6e0', lineHeight: 1.2 }}>{meta.printType}</span>}
-        {meta.color && <span style={{ display: 'inline-block', verticalAlign: 'middle', margin: '0 4px', padding: '6px 12px', borderRadius: 999, fontSize: 12, fontWeight: 500, color: '#3a3a3a', background: '#f6f6f4', border: '1px solid #e8e6e0', lineHeight: 1.2 }}>{meta.color}</span>}
+        {meta.category && <span style={{ display: 'inline-block', verticalAlign: 'middle', margin: '0 4px', height: 28, lineHeight: '28px', padding: '0 14px', borderRadius: 999, fontSize: 12, fontWeight: 500, color: '#fff', background: '#0a0a0a' }}>{meta.category}</span>}
+        {meta.printType && <span style={{ display: 'inline-block', verticalAlign: 'middle', margin: '0 4px', height: 28, lineHeight: '28px', padding: '0 14px', borderRadius: 999, fontSize: 12, fontWeight: 500, color: '#3a3a3a', background: '#f6f6f4', border: '1px solid #e8e6e0' }}>{meta.printType}</span>}
+        {meta.color && <span style={{ display: 'inline-block', verticalAlign: 'middle', margin: '0 4px', height: 28, lineHeight: '28px', padding: '0 14px', borderRadius: 999, fontSize: 12, fontWeight: 500, color: '#3a3a3a', background: '#f6f6f4', border: '1px solid #e8e6e0' }}>{meta.color}</span>}
       </div>
       <h1 style={{ fontSize: 54, lineHeight: 1.05, letterSpacing: '-0.03em', fontWeight: 700, marginBottom: meta.productName ? 12 : 0, textAlign: 'center' }}>{meta.title || '제목 없음'}</h1>
       {meta.productName && (
