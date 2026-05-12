@@ -436,9 +436,9 @@ const DetailPage = ({ meta, shots }) => (
     {/* HERO */}
     <section style={{ padding: '60px 56px 32px', textAlign: 'center' }}>
       <div style={{ marginBottom: 20, textAlign: 'center', fontSize: 0 }}>
-        {meta.category && <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', verticalAlign: 'middle', margin: '0 4px', padding: '7px 14px', borderRadius: 999, fontSize: 12, fontWeight: 500, lineHeight: 1, color: '#fff', background: '#0a0a0a' }}>{meta.category}</span>}
-        {meta.printType && <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', verticalAlign: 'middle', margin: '0 4px', padding: '7px 14px', borderRadius: 999, fontSize: 12, fontWeight: 500, lineHeight: 1, color: '#3a3a3a', background: '#f6f6f4', border: '1px solid #e8e6e0' }}>{meta.printType}</span>}
-        {meta.color && <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', verticalAlign: 'middle', margin: '0 4px', padding: '7px 14px', borderRadius: 999, fontSize: 12, fontWeight: 500, lineHeight: 1, color: '#3a3a3a', background: '#f6f6f4', border: '1px solid #e8e6e0' }}>{meta.color}</span>}
+        {meta.category && <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', verticalAlign: 'middle', margin: '0 4px', padding: '7px 14px', borderRadius: 999, fontSize: 12, fontWeight: 500, lineHeight: 1, color: '#fff', background: '#0a0a0a' }}><span className="dp-pill-text">{meta.category}</span></span>}
+        {meta.printType && <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', verticalAlign: 'middle', margin: '0 4px', padding: '7px 14px', borderRadius: 999, fontSize: 12, fontWeight: 500, lineHeight: 1, color: '#3a3a3a', background: '#f6f6f4', border: '1px solid #e8e6e0' }}><span className="dp-pill-text">{meta.printType}</span></span>}
+        {meta.color && <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', verticalAlign: 'middle', margin: '0 4px', padding: '7px 14px', borderRadius: 999, fontSize: 12, fontWeight: 500, lineHeight: 1, color: '#3a3a3a', background: '#f6f6f4', border: '1px solid #e8e6e0' }}><span className="dp-pill-text">{meta.color}</span></span>}
       </div>
       <h1 style={{ fontSize: 54, lineHeight: 1.05, letterSpacing: '-0.03em', fontWeight: 700, marginBottom: meta.productName ? 12 : 0, textAlign: 'center' }}>{meta.title || '제목 없음'}</h1>
       {meta.productName && (
@@ -719,6 +719,8 @@ export default function App() {
     const el = document.getElementById('detail-capture');
     if (!el) return showNotification('캡처 영역을 찾을 수 없습니다', 'error');
     setIsCapturing(true);
+    // 캡처 모드 클래스 — html2canvas가 한글 baseline 위치를 잘못 잡는 걸 보정
+    el.classList.add('dp-capture-mode');
     try {
       if (document.fonts && document.fonts.ready) {
         try { await document.fonts.ready; } catch (e) {}
@@ -760,6 +762,7 @@ export default function App() {
       console.error(e);
       showNotification('캡처 실패: ' + (e.message || e), 'error');
     } finally {
+      el.classList.remove('dp-capture-mode');
       setIsCapturing(false);
     }
   };

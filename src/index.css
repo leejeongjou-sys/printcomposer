@@ -1,3 +1,9 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* 디테일 페이지 다운로드(html2canvas) 시 한글 텍스트 baseline 보정 */
+.dp-capture-mode .dp-pill-text {
+  display: inline-block;
+  transform: translateY(-6px);
+}
