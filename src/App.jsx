@@ -1016,7 +1016,7 @@ export default function App() {
               {/* 컴팩트 분석 행 — 프린트별 1줄 (썸네일 + 종류 셀렉트 + 참고사진 +) */}
               <div className="space-y-1.5">
                 {prints.map((p, idx) => (
-                  <details key={p.id} className="border border-gray-200 bg-white open:border-black">
+                  <details key={p.id} open className="border border-gray-200 bg-white open:border-black">
                     <summary className="flex items-center gap-2 p-2 cursor-pointer list-none hover:bg-gray-50">
                       <div className="w-9 h-9 border border-gray-200 shrink-0 overflow-hidden bg-gray-50">
                         <img src={p.images[0]} alt="" className="w-full h-full object-contain" />
