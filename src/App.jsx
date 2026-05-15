@@ -798,14 +798,13 @@ export default function App() {
   // ---------- detail page ----------
   const newSlotId = () => `slot_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
 
-  // 자동 채움 콘텐츠 빌드 (현재 합성 결과 기준)
+  // 자동 채움 콘텐츠 빌드 (합성 결과만 — 정면/후면 + AI 디테일 컷)
   const buildAutoFillShots = () => {
     const initial = [];
     const push = (src) => { if (src) initial.push({ id: newSlotId(), src }); };
     push(results.front_view?.dataUrl);
     push(results.back_view?.dataUrl);
-    push(prints[0]?.images?.[0]);
-    // 모든 완료된 디테일 컷
+    // AI가 생성한 디테일 컷만 (프린트 풀 원본은 포함 X)
     Object.values(detailShotResults).forEach(r => {
       if (r?.status === 'done') push(r.dataUrl);
     });
