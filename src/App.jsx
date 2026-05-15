@@ -521,7 +521,8 @@ export default function App() {
   const [prints, setPrints] = useState([]); // [{ id, images: [dataUrl, ...], analysis, analyzing, error }]
   const [placements, setPlacements] = useState([]); // [{ side, printId, widthPct, offsetY, offsetX }]
   const [results, setResults] = useState({}); // { [side]: { status, dataUrl, error } }
-  const [detailShotResults, setDetailShotResults] = useState({ d1: null, d2: null }); // 매거진 디테일 컷 (자동 생성)
+  const [detailShotResults, setDetailShotResults] = useState({}); // { [sourceKey]: { status, dataUrl, error } } — 매거진 디테일 컷
+  const [detailSelectionKeys, setDetailSelectionKeys] = useState([]); // ["printId|imgIdx", ...] — 디테일 소스로 선택된 사진 키들
   const [composeCount, setComposeCount] = useState(0);
   const isComposing = composeCount > 0;
   const [extraPrompt, setExtraPrompt] = useState('');
@@ -582,6 +583,27 @@ export default function App() {
       if (newImages.length === 0) return p;
       return { ...p, images: newImages };
     }));
+    // 인덱스 시프트: 삭제된 idx의 키는 제거, 그보다 큰 idx는 -1
+    setDetailSelectionKeys(prev => prev.flatMap(k => {
+      const [pId, idxStr] = k.split('|');
+      if (pId !== printId) return [k];
+      const i = Number(idxStr);
+      if (i === imgIdx) return [];
+      if (i > imgIdx) return [`${pId}|${i - 1}`];
+      return [k];
+    }));
+    setDetailShotResults(r => {
+      const next = {};
+      for (const [k, v] of Object.entries(r)) {
+        const [pId, idxStr] = k.split('|');
+        if (pId !== printId) { next[k] = v; continue; }
+        const i = Number(idxStr);
+        if (i === imgIdx) continue;
+        if (i > imgIdx) next[`${pId}|${i - 1}`] = v;
+        else next[k] = v;
+      }
+      return next;
+    });
   };
 
   const reanalyzePrint = async (id) => {
@@ -605,6 +627,17 @@ export default function App() {
   const removePrint = (id) => {
     setPrints(prev => prev.filter(p => p.id !== id));
     setPlacements(prev => prev.filter(pl => pl.printId !== id));
+    // 해당 print의 모든 디테일 소스 선택/결과 제거
+    setDetailSelectionKeys(prev => prev.filter(k => !k.startsWith(`${id}|`)));
+    setDetailShotResults(r => Object.fromEntries(Object.entries(r).filter(([k]) => !k.startsWith(`${id}|`))));
+  };
+
+  // ---------- detail source selection ----------
+  const sourceKey = (printId, imgIdx) => `${printId}|${imgIdx}`;
+  const isDetailSelected = (printId, imgIdx) => detailSelectionKeys.includes(sourceKey(printId, imgIdx));
+  const toggleDetailSelection = (printId, imgIdx) => {
+    const key = sourceKey(printId, imgIdx);
+    setDetailSelectionKeys(prev => prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key]);
   };
 
   // ---------- placement handlers ----------
@@ -687,25 +720,27 @@ export default function App() {
     }
   };
 
-  // 내부: 디테일 생성 (isComposing 카운트 관리 X)
+  // 내부: 디테일 생성 (선택된 소스만, isComposing 카운트 관리 X)
   const composeDetailShotsInternal = async () => {
-    const detailSources = [];
-    prints.forEach(p => p.images.slice(1).forEach(img => detailSources.push({ img, type: p.analysis?.type })));
-    prints.forEach(p => detailSources.push({ img: p.images[0], type: p.analysis?.type }));
-    const detailJobs = detailSources.slice(0, 2);
-    if (detailJobs.length === 0) return;
+    if (detailSelectionKeys.length === 0) return;
 
-    const initial = { d1: null, d2: null };
-    detailJobs.forEach((_, i) => { initial[i === 0 ? 'd1' : 'd2'] = { status: 'pending' }; });
+    const initial = { ...detailShotResults };
+    detailSelectionKeys.forEach(k => { initial[k] = { status: 'pending' }; });
     setDetailShotResults(initial);
 
-    await Promise.all(detailJobs.map(async ({ img, type }, i) => {
-      const slot = i === 0 ? 'd1' : 'd2';
+    await Promise.all(detailSelectionKeys.map(async (key) => {
+      const [printId, idxStr] = key.split('|');
+      const print = prints.find(p => p.id === printId);
+      const img = print?.images?.[Number(idxStr)];
+      if (!img) {
+        setDetailShotResults(r => ({ ...r, [key]: { status: 'error', error: '소스 이미지 없음' } }));
+        return;
+      }
       try {
-        const dataUrl = await composeDetail({ apiKey, sourceImage: img, printType: type });
-        setDetailShotResults(r => ({ ...r, [slot]: { status: 'done', dataUrl } }));
+        const dataUrl = await composeDetail({ apiKey, sourceImage: img, printType: print.analysis?.type });
+        setDetailShotResults(r => ({ ...r, [key]: { status: 'done', dataUrl } }));
       } catch (e) {
-        setDetailShotResults(r => ({ ...r, [slot]: { status: 'error', error: e.message } }));
+        setDetailShotResults(r => ({ ...r, [key]: { status: 'error', error: e.message } }));
       }
     }));
   };
@@ -714,7 +749,12 @@ export default function App() {
   const composeDetailShots = async () => {
     if (!apiKey) { showNotification('API Key를 먼저 설정하세요', 'error'); return; }
     if (prints.length === 0) { showNotification('프린트를 1개 이상 업로드하세요', 'error'); return; }
-    for (const p of prints) {
+    if (detailSelectionKeys.length === 0) { showNotification('디테일 소스를 1장 이상 체크하세요 (분석/배치 카드 안에서 사진에 체크)', 'error'); return; }
+    // 선택된 키의 print 들만 분석 완료 확인
+    const involvedPrintIds = new Set(detailSelectionKeys.map(k => k.split('|')[0]));
+    for (const pid of involvedPrintIds) {
+      const p = prints.find(pp => pp.id === pid);
+      if (!p) continue;
       if (!p.analysis) { showNotification('아직 분석 중인 프린트가 있습니다', 'error'); return; }
     }
     setComposeCount(c => c + 1);
@@ -765,8 +805,10 @@ export default function App() {
     push(results.front_view?.dataUrl);
     push(results.back_view?.dataUrl);
     push(prints[0]?.images?.[0]);
-    push(detailShotResults.d1?.dataUrl);
-    push(detailShotResults.d2?.dataUrl);
+    // 모든 완료된 디테일 컷
+    Object.values(detailShotResults).forEach(r => {
+      if (r?.status === 'done') push(r.dataUrl);
+    });
     return initial;
   };
 
@@ -1013,21 +1055,33 @@ export default function App() {
                       <div className="flex items-center justify-between mb-1.5">
                         <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400">참고 사진 ({p.images.length}장)</span>
                       </div>
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-[10px] text-gray-400">★ 체크 = 디테일 컷 생성 소스</span>
+                      </div>
                       <div className="flex gap-1.5 flex-wrap">
-                        {p.images.map((img, imgIdx) => (
-                          <div key={imgIdx} className="relative group w-12 h-12 border border-gray-300 bg-white overflow-hidden">
-                            <img src={img} alt="" className="w-full h-full object-contain" />
-                            <div className="absolute top-0 left-0 bg-black text-white text-[8px] font-bold px-0.5">
-                              {imgIdx === 0 ? '메인' : imgIdx + 1}
+                        {p.images.map((img, imgIdx) => {
+                          const selected = isDetailSelected(p.id, imgIdx);
+                          return (
+                            <div key={imgIdx}
+                              className={`relative group w-12 h-12 border bg-white overflow-hidden cursor-pointer ${selected ? 'border-black border-2' : 'border-gray-300'}`}
+                              onClick={() => toggleDetailSelection(p.id, imgIdx)}
+                              title={selected ? '디테일 소스에서 제외' : '디테일 소스로 선택'}>
+                              <img src={img} alt="" className="w-full h-full object-contain" />
+                              <div className="absolute top-0 left-0 bg-black text-white text-[8px] font-bold px-0.5">
+                                {imgIdx === 0 ? '메인' : imgIdx + 1}
+                              </div>
+                              {selected && (
+                                <div className="absolute bottom-0 left-0 bg-black text-white text-[9px] font-bold px-1 leading-none py-0.5">★</div>
+                              )}
+                              {p.images.length > 1 && (
+                                <button onClick={(e) => { e.stopPropagation(); removePrintRef(p.id, imgIdx); }}
+                                  className="absolute top-0 right-0 bg-white border border-black p-0.5 opacity-0 group-hover:opacity-100 hover:bg-black hover:text-white">
+                                  <LucideX className="w-2 h-2" />
+                                </button>
+                              )}
                             </div>
-                            {p.images.length > 1 && (
-                              <button onClick={() => removePrintRef(p.id, imgIdx)}
-                                className="absolute top-0 right-0 bg-white border border-black p-0.5 opacity-0 group-hover:opacity-100 hover:bg-black hover:text-white">
-                                <LucideX className="w-2 h-2" />
-                              </button>
-                            )}
-                          </div>
-                        ))}
+                          );
+                        })}
                         <div className="w-12 h-12">
                           <ImageDropZone
                             value={null}
@@ -1155,13 +1209,13 @@ export default function App() {
             </button>
             <button
               onClick={composeDetailShots}
-              disabled={isComposing || prints.length === 0}
+              disabled={isComposing || prints.length === 0 || detailSelectionKeys.length === 0}
               className="py-2 border border-black text-black text-[11px] font-bold uppercase tracking-wider disabled:opacity-30 hover:bg-black hover:text-white flex items-center justify-center gap-1"
-              title="디테일 컷만 생성"
+              title={detailSelectionKeys.length === 0 ? '체크된 사진 없음' : `${detailSelectionKeys.length}장 디테일 생성`}
             >
-              {(detailShotResults.d1?.status === 'pending' || detailShotResults.d2?.status === 'pending')
+              {Object.values(detailShotResults).some(r => r?.status === 'pending')
                 ? <><LucideLoader2 className="w-3 h-3 animate-spin" /> 디테일</>
-                : <>디테일</>}
+                : <>디테일 ({detailSelectionKeys.length})</>}
             </button>
           </div>
         </section>
@@ -1222,34 +1276,36 @@ export default function App() {
             })}
           </div>
 
-          {/* Auto-generated detail shots (1:1) */}
-          {(detailShotResults.d1 || detailShotResults.d2) && (
+          {/* Generated detail shots (1:1, dynamic count from selection) */}
+          {Object.keys(detailShotResults).length > 0 && (
             <div className="mt-4">
-              <div className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-2">디테일 (자동 생성)</div>
+              <div className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-2">디테일 ({Object.keys(detailShotResults).length}장)</div>
               <div className="grid grid-cols-2 gap-3">
-                {['d1', 'd2'].map(slot => {
-                  const r = detailShotResults[slot];
-                  if (!r) return null;
+                {Object.entries(detailShotResults).map(([key, r], i) => {
+                  const [printId, idxStr] = key.split('|');
+                  const printIdx = prints.findIndex(p => p.id === printId);
+                  const refLabel = idxStr === '0' ? '메인' : `참고 ${idxStr}`;
+                  const labelText = printIdx >= 0 ? `#${printIdx + 1} ${refLabel}` : `디테일 ${i + 1}`;
                   return (
-                    <div key={slot} className="aspect-square bg-white border border-gray-200 flex flex-col relative overflow-hidden">
+                    <div key={key} className="aspect-square bg-white border border-gray-200 flex flex-col relative overflow-hidden">
                       {r.status === 'pending' ? (
                         <div className="flex-1 flex flex-col items-center justify-center text-gray-500">
                           <LucideLoader2 className="w-6 h-6 animate-spin mb-1" />
-                          <span className="text-[10px] font-bold uppercase tracking-wider">디테일 {slot === 'd1' ? '01' : '02'}</span>
+                          <span className="text-[10px] font-bold uppercase tracking-wider">{labelText}</span>
                         </div>
                       ) : r.status === 'error' ? (
                         <div className="flex-1 flex flex-col items-center justify-center text-red-500 px-2 text-center">
                           <LucideXCircle className="w-6 h-6 mb-1" />
-                          <span className="text-[10px] font-bold uppercase tracking-wider mb-1">디테일 {slot === 'd1' ? '01' : '02'}</span>
+                          <span className="text-[10px] font-bold uppercase tracking-wider mb-1">{labelText}</span>
                           <span className="text-[9px] text-red-400 leading-tight">{r.error}</span>
                         </div>
                       ) : (
                         <>
-                          <img src={r.dataUrl} alt={`디테일 ${slot}`} className="w-full h-full object-contain" />
+                          <img src={r.dataUrl} alt={labelText} className="w-full h-full object-contain" />
                           <div className="absolute top-1 left-1 bg-black text-white text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5">
-                            디테일 {slot === 'd1' ? '01' : '02'}
+                            {labelText}
                           </div>
-                          <button onClick={() => downloadResult(`detail_${slot}`, r.dataUrl)}
+                          <button onClick={() => downloadResult(`detail_${i + 1}`, r.dataUrl)}
                             className="absolute bottom-1 right-1 bg-black text-white p-1 hover:bg-gray-800">
                             <LucideDownload className="w-3.5 h-3.5" />
                           </button>
