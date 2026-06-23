@@ -292,13 +292,14 @@ const composeView = async ({
       aspect_ratio: '1:1',
       aspect_ratio_note: '결과 캔버스는 정확히 정사각형(1:1). 앞면/뒷면 모두 같은 크기로 출력되어야 함.',
       background: '#FFFFFF',
-      background_note: '배경은 반드시 순백색 #FFFFFF (RGB 255,255,255). 그라데이션, 텍스처, 그림자, 회색 톤 일체 없이 완전히 깨끗한 흰색.',
+      background_note: '배경은 반드시 완전한 순백색 #FFFFFF (RGB 255,255,255)로 전 영역을 균일하게 채울 것. 그라데이션·비네팅·텍스처·그림자·회색/크림 톤·노이즈·입자(grain)·먼지/티끌/반점(specks/dust)·JPEG 압축 얼룩 일체 금지. 스튜디오 누끼처럼 페인트로 칠한 듯 완전히 매끈하고 깨끗한 단색 흰색.',
       resolution: '4K',
       composition: '제품을 정사각형 캔버스 중앙에 배치. 제품의 실루엣/색상/형태는 [제품 이미지]를 그대로 따를 것 (제품 비율 자체는 변경 금지, 캔버스만 1:1).',
     },
     must_preserve: ['제품의 실루엣', '제품 원래 색상', '제품의 형태와 비율', '제품 이미지의 구도'],
     must_apply: [
-      '배경은 반드시 #FFFFFF 순백색 (다른 색·그라데이션·그림자 절대 금지)',
+      '배경은 반드시 #FFFFFF 순백색 단색으로 균일하게 (다른 색·그라데이션·그림자 절대 금지)',
+      '배경에 먼지·티끌·점·반점·노이즈·입자·얼룩이 단 하나도 없을 것 — 제품 실루엣 바깥은 전부 픽셀 단위로 완벽히 깨끗한 #FFFFFF 단색. 제품 가장자리도 지저분한 외곽선/헤일로 없이 깔끔하게 분리.',
       '프린트는 [프린트 이미지 #N]에 보이는 색상/형태/질감/잉크특성을 그대로 옮길 것 (재해석/재생성/스타일화 금지)',
       '원단의 주름·음영·결이 프린트 위에 자연스럽게 반영',
       '각 placement의 size.width_pct_of_garment_width 값을 픽셀 단위로 정확히 반영 (의류 가로 폭의 X%)',
@@ -344,22 +345,26 @@ ${JSON.stringify(spec, null, 2)}
 const composeDetail = async ({ apiKey, sourceImage, printType }) => {
   const typeInfo = PRINT_TYPES.find(t => t.value === printType);
   const prompt = `다음 [참고 이미지]는 의류에 적용된 프린트(${typeInfo?.label || ''})의 클로즈업 사진입니다.
-이 프린트를 동일한 원단 위에 펼쳐 놓고 위에서 아래로 촬영한 듯한 디테일 사진을 새로 생성하세요.
+이 사진을 **각도·시점·구도·프레이밍을 그대로 유지한 채** 깔끔하게 보정(리터칭)만 해주세요. 새로 촬영하거나 다른 앵글로 다시 그리지 마세요.
 
-촬영 조건:
-- **시점**: 탑뷰 (카메라가 원단 바로 위에서 수직으로 내려다본 시점, 평면 정사각 프레이밍)
-- **카메라**: 풀프레임 DSLR + 매크로 렌즈 (f/8 정도, 전체적으로 또렷한 초점)
-- **조명**: 좌우 또는 상단에 소프트박스 1~2개 (부드럽고 균일한 빛, 강한 그림자 없음, 하이라이트도 절제됨)
-- **배경**: 프린트가 박힌 원단 자체. 원단의 결과 질감이 자연스럽게 보여야 함. 빈 흰 배경/스튜디오 사이클로라마 X.
-- **컴포지션**: 프린트가 프레임 중앙에 균형있게, 약간의 원단 여백 포함
+핵심 원칙 — 변형 금지:
+- 카메라 앵글·시점·거리·원근·프레이밍, 그리고 프린트의 위치/크기/형태를 [참고 이미지]와 **동일하게** 유지. 탑뷰로 바꾸거나 회전·이동·확대·축소·재구성하지 말 것.
+- 프린트의 색상/형태/질감/잉크 두께/실 결/광택, 원단의 색상과 결도 원본 그대로 보존. 색이 빠지거나 흰색으로 빛바래지 않게.
+- 원단 색상 유지 (검정 후드면 검정 그대로, 회색이면 회색 그대로). 흰 원단으로 바꾸지 말 것.
+
+적용할 보정 (이것만):
+- 노이즈·먼지·티끌·얼룩·잡티 제거로 깨끗하게
+- 조명/노출 균일화 (얼룩진 그림자나 번들거림 정리, 디테일이 고르게 보이도록)
+- 화이트밸런스·색감 자연스럽게 정리, 선명도(샤프닝) 약간 향상
+- 초점이 흐린 부분이 있으면 또렷하게
 
 엄수 사항:
-- 프린트의 색상/형태/질감/잉크 두께/실 결/광택을 참고 이미지 그대로 보존. **절대 흰색으로 빛바래거나 색이 빠지면 안 됨.**
-- 원단 색상도 참고 이미지의 원래 색상 유지 (검정 후드면 검정 원단 위, 회색이면 회색 위 등). 흰 원단으로 바꾸지 말 것.
 - 프린트 외 다른 요소(로고/텍스트/배경 소품) 추가 금지
-- 1:1 정사각형 비율, 4K 고화질, 디테일·텍스처 살아있도록
+- 원본의 비율·구도를 그대로 유지하되 4K 고화질로 디테일·텍스처가 살아있도록
 ${typeInfo ? `\n프린트 종류: ${typeInfo.label} — 시각 특성: ${typeInfo.desc}` : ''}`;
 
+  // 원본 각도·프레이밍 유지를 위해 1:1 강제 대신 원본에 가장 가까운 비율로
+  const aspectRatio = await detectClosestAspect(sourceImage);
   const data = await callGemini({
     apiKey,
     parts: [
@@ -367,7 +372,7 @@ ${typeInfo ? `\n프린트 종류: ${typeInfo.label} — 시각 특성: ${typeInf
       { inlineData: { mimeType: 'image/jpeg', data: stripBase64(sourceImage) } },
     ],
     expectImage: true,
-    imageConfig: { aspectRatio: '1:1', imageSize: '4K' },
+    imageConfig: { aspectRatio, imageSize: '4K' },
   });
   const imgPart = data?.candidates?.[0]?.content?.parts?.find(p => p.inlineData?.data);
   if (imgPart?.inlineData?.data) return `data:image/jpeg;base64,${imgPart.inlineData.data}`;
@@ -439,6 +444,134 @@ const DETAIL_PAGE_DEFAULTS = {
   color: '블랙',
 };
 
+// 이미지 보정 (CSS filter 기반)
+const ADJ_DEFAULTS = { brightness: 100, hue: 0, saturate: 100, contrast: 100 };
+const ADJ_CONTROLS = [
+  { key: 'brightness', label: '밝기', min: 0,    max: 200, unit: '%' },
+  { key: 'hue',        label: '색조', min: -180, max: 180, unit: '°' },
+  { key: 'saturate',   label: '채도', min: 0,    max: 200, unit: '%' },
+  { key: 'contrast',   label: '명도', min: 0,    max: 200, unit: '%' },
+];
+const adjToFilter = (adj) => {
+  const a = { ...ADJ_DEFAULTS, ...(adj || {}) };
+  return `brightness(${a.brightness}%) saturate(${a.saturate}%) contrast(${a.contrast}%) hue-rotate(${a.hue}deg)`;
+};
+const isDefaultAdj = (adj) =>
+  ADJ_CONTROLS.every(c => (adj?.[c.key] ?? ADJ_DEFAULTS[c.key]) === ADJ_DEFAULTS[c.key]);
+
+// 보정값을 이미지에 영구 적용한 dataURL 생성 (export 시 사용)
+const applyAdjustments = (dataUrl, adj) => new Promise((resolve, reject) => {
+  const img = new Image();
+  img.onload = () => {
+    const canvas = document.createElement('canvas');
+    canvas.width = img.naturalWidth;
+    canvas.height = img.naturalHeight;
+    const ctx = canvas.getContext('2d');
+    ctx.filter = adjToFilter(adj);
+    ctx.drawImage(img, 0, 0);
+    resolve(canvas.toDataURL('image/jpeg', 0.95));
+  };
+  img.onerror = reject;
+  img.src = dataUrl;
+});
+
+// 컨테이너 내 모든 <img> 로드 완료 대기
+const waitForImages = (el) => {
+  const imgs = Array.from(el.querySelectorAll('img'));
+  return Promise.all(imgs.map(img =>
+    (img.complete && img.naturalWidth) ? null : new Promise(res => { img.onload = res; img.onerror = res; })
+  ));
+};
+
+// 가장자리 flood-fill로 배경을 순백색으로 처리.
+// 코너 배경색 기준(globalTol) + 인접 픽셀 연속성(localTol) 이중 게이트로
+// 어두운/밝은 제품 모두 보존하면서 배경 얼룩만 흰색으로 채운다.
+const whitenBackground = (dataUrl, opts = {}) => new Promise((resolve, reject) => {
+  const { localTol = 32, globalTol = 100, dilate = 1 } = opts;
+  const img = new Image();
+  img.onload = () => {
+    try {
+      const w = img.naturalWidth, h = img.naturalHeight, N = w * h;
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      ctx.drawImage(img, 0, 0);
+      const id = ctx.getImageData(0, 0, w, h);
+      const d = id.data;
+
+      // 코너 패치 평균 = 배경 기준색
+      let rR = 0, rG = 0, rB = 0, cnt = 0;
+      const patch = 8;
+      for (const [cx, cy] of [[0, 0], [w - 1, 0], [0, h - 1], [w - 1, h - 1]]) {
+        for (let yy = 0; yy < patch; yy++) for (let xx = 0; xx < patch; xx++) {
+          const px = Math.min(w - 1, Math.max(0, cx + (cx === 0 ? xx : -xx)));
+          const py = Math.min(h - 1, Math.max(0, cy + (cy === 0 ? yy : -yy)));
+          const i = (py * w + px) * 4; rR += d[i]; rG += d[i + 1]; rB += d[i + 2]; cnt++;
+        }
+      }
+      rR /= cnt; rG /= cnt; rB /= cnt;
+      const gTol2 = globalTol * globalTol, lTol2 = localTol * localTol;
+      const distRef2 = (i) => { const a = d[i] - rR, b = d[i + 1] - rG, c = d[i + 2] - rB; return a * a + b * b + c * c; };
+      const distPx2 = (i, j) => { const a = d[i] - d[j], b = d[i + 1] - d[j + 1], c = d[i + 2] - d[j + 2]; return a * a + b * b + c * c; };
+
+      let bg = new Uint8Array(N);
+      const stack = new Int32Array(N);
+      let sp = 0;
+      const seed = (p) => { if (!bg[p] && distRef2(p * 4) <= gTol2) { bg[p] = 1; stack[sp++] = p; } };
+      for (let x = 0; x < w; x++) { seed(x); seed((h - 1) * w + x); }
+      for (let y = 0; y < h; y++) { seed(y * w); seed(y * w + (w - 1)); }
+
+      while (sp > 0) {
+        const p = stack[--sp], i = p * 4, x = p % w, y = (p / w) | 0;
+        const tryN = (q) => { if (!bg[q]) { const j = q * 4; if (distRef2(j) <= gTol2 && distPx2(i, j) <= lTol2) { bg[q] = 1; stack[sp++] = q; } } };
+        if (x > 0) tryN(p - 1);
+        if (x < w - 1) tryN(p + 1);
+        if (y > 0) tryN(p - w);
+        if (y < h - 1) tryN(p + w);
+      }
+
+      // 얇은 회색 헤일로 제거용 팽창
+      for (let it = 0; it < dilate; it++) {
+        const next = bg.slice();
+        for (let p = 0; p < N; p++) {
+          if (bg[p]) continue;
+          const x = p % w, y = (p / w) | 0;
+          if ((x > 0 && bg[p - 1]) || (x < w - 1 && bg[p + 1]) || (y > 0 && bg[p - w]) || (y < h - 1 && bg[p + w])) next[p] = 1;
+        }
+        bg = next;
+      }
+
+      for (let p = 0; p < N; p++) if (bg[p]) { const i = p * 4; d[i] = 255; d[i + 1] = 255; d[i + 2] = 255; }
+      ctx.putImageData(id, 0, 0);
+      resolve(canvas.toDataURL('image/jpeg', 0.95));
+    } catch (e) { reject(e); }
+  };
+  img.onerror = reject;
+  img.src = dataUrl;
+});
+
+// 정사각 썸네일 생성 (중앙 크롭 cover + 보정 적용)
+const makeThumbnail = (dataUrl, adj, size = 500, quality = 0.92) => new Promise((resolve, reject) => {
+  const img = new Image();
+  img.onload = () => {
+    const canvas = document.createElement('canvas');
+    canvas.width = size; canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, size, size);
+    ctx.filter = adjToFilter(adj);
+    const w = img.naturalWidth, h = img.naturalHeight;
+    const scale = Math.max(size / w, size / h); // cover
+    const dw = w * scale, dh = h * scale;
+    ctx.drawImage(img, (size - dw) / 2, (size - dh) / 2, dw, dh);
+    resolve(canvas.toDataURL('image/jpeg', quality));
+  };
+  img.onerror = reject;
+  img.src = dataUrl;
+});
+
 // 프리셋 + 직접입력 셀렉트
 const PresetSelect = ({ value, onChange, options, placeholder, label }) => {
   const valueMatchesPreset = options.includes(value);
@@ -508,7 +641,7 @@ const DetailPage = ({ meta, shots }) => (
     <section style={{ padding: '24px 56px 60px' }}>
       {shots.filter(s => s.src).map(s => (
         <div key={s.id} style={{ borderRadius: 14, overflow: 'hidden', marginBottom: 20, background: '#f6f6f4' }}>
-          <img src={s.src} alt="" style={{ width: '100%', height: 'auto', display: 'block' }} />
+          <img src={s.src} alt="" style={{ width: '100%', height: 'auto', display: 'block', filter: adjToFilter(s.adj) }} />
         </div>
       ))}
     </section>
@@ -526,10 +659,12 @@ export default function App() {
   const [composeCount, setComposeCount] = useState(0);
   const isComposing = composeCount > 0;
   const [extraPrompt, setExtraPrompt] = useState('');
+  const [autoWhiten, setAutoWhiten] = useState(true); // 합성컷 배경 자동 흰색 처리
   const [showDetailPage, setShowDetailPage] = useState(false);
   const [detailMeta, setDetailMeta] = useState(DETAIL_PAGE_DEFAULTS);
   const [detailShots, setDetailShots] = useState([]); // [{ id, src }] 동적 슬롯
   const [isCapturing, setIsCapturing] = useState(false);
+  const [captureShots, setCaptureShots] = useState(null); // export 시 보정 구운 슬롯
   const [notification, setNotification] = useState(null);
   const [apiKey, setApiKey] = useState(() => localStorage.getItem('print_composer_api_key') || '');
   const [showSettings, setShowSettings] = useState(false);
@@ -683,7 +818,7 @@ export default function App() {
 
     setResults(r => ({ ...r, [view.key]: { status: 'pending' } }));
     try {
-      const dataUrl = await composeView({
+      const rawUrl = await composeView({
         apiKey,
         productImageDataUrl: productImage,
         items,
@@ -692,7 +827,12 @@ export default function App() {
         extraPrompt,
         aspectRatio: '1:1',
       });
-      setResults(r => ({ ...r, [view.key]: { status: 'done', dataUrl } }));
+      let dataUrl = rawUrl, whitenedUrl = null;
+      if (autoWhiten) {
+        try { whitenedUrl = await whitenBackground(rawUrl); dataUrl = whitenedUrl; }
+        catch { /* 화이트닝 실패 시 원본 사용 */ }
+      }
+      setResults(r => ({ ...r, [view.key]: { status: 'done', dataUrl, rawUrl, whitenedUrl, whitened: !!whitenedUrl } }));
       return 'done';
     } catch (e) {
       setResults(r => ({ ...r, [view.key]: { status: 'error', error: e.message } }));
@@ -795,13 +935,31 @@ export default function App() {
     });
   };
 
+  // 배경 흰색 처리 ON/OFF — 기존 결과에도 즉시 재적용
+  const toggleAutoWhiten = async (on) => {
+    setAutoWhiten(on);
+    const keys = Object.keys(results).filter(k => results[k]?.status === 'done' && results[k]?.rawUrl);
+    if (on && keys.some(k => !results[k].whitenedUrl)) showNotification('배경 흰색 처리 적용 중...');
+    for (const key of keys) {
+      const r = results[key];
+      if (on) {
+        let wl = r.whitenedUrl;
+        if (!wl) { try { wl = await whitenBackground(r.rawUrl); } catch { wl = r.rawUrl; } }
+        setResults(prev => ({ ...prev, [key]: { ...prev[key], dataUrl: wl, whitenedUrl: wl, whitened: true } }));
+      } else {
+        setResults(prev => ({ ...prev, [key]: { ...prev[key], dataUrl: prev[key].rawUrl, whitened: false } }));
+      }
+    }
+  };
+
   // ---------- detail page ----------
   const newSlotId = () => `slot_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+  const newSlot = (src = null) => ({ id: newSlotId(), src, adj: { ...ADJ_DEFAULTS } });
 
   // 자동 채움 콘텐츠 빌드 (합성 결과만 — 정면/후면 + AI 디테일 컷)
   const buildAutoFillShots = () => {
     const initial = [];
-    const push = (src) => { if (src) initial.push({ id: newSlotId(), src }); };
+    const push = (src) => { if (src) initial.push(newSlot(src)); };
     push(results.front_view?.dataUrl);
     push(results.back_view?.dataUrl);
     // AI가 생성한 디테일 컷만 (프린트 풀 원본은 포함 X)
@@ -817,7 +975,7 @@ export default function App() {
     const allEmpty = detailShots.length === 0 || detailShots.every(s => !s.src);
     if (allEmpty) {
       const initial = buildAutoFillShots();
-      if (initial.length === 0) initial.push({ id: newSlotId(), src: null });
+      if (initial.length === 0) initial.push(newSlot());
       setDetailShots(initial);
     }
     // 프린트 종류 라벨 자동 추정
@@ -839,11 +997,21 @@ export default function App() {
   };
 
   const addDetailShot = () => {
-    setDetailShots(prev => [...prev, { id: newSlotId(), src: null }]);
+    setDetailShots(prev => [...prev, newSlot()]);
   };
 
   const updateDetailShot = (id) => async (dataUrl) => {
     setDetailShots(prev => prev.map(s => s.id === id ? { ...s, src: dataUrl } : s));
+  };
+
+  const updateDetailShotAdj = (id, key, value) => {
+    setDetailShots(prev => prev.map(s => s.id === id
+      ? { ...s, adj: { ...ADJ_DEFAULTS, ...(s.adj || {}), [key]: value } }
+      : s));
+  };
+
+  const resetDetailShotAdj = (id) => {
+    setDetailShots(prev => prev.map(s => s.id === id ? { ...s, adj: { ...ADJ_DEFAULTS } } : s));
   };
 
   const removeDetailShot = (id) => {
@@ -869,10 +1037,23 @@ export default function App() {
     // 캡처 모드 클래스 — html2canvas가 한글 baseline 위치를 잘못 잡는 걸 보정
     el.classList.add('dp-capture-mode');
     try {
+      // 보정값을 이미지에 미리 굽기 (html2canvas는 CSS filter를 신뢰성 있게 렌더하지 못함)
+      const baked = await Promise.all(detailShots.map(async (s) => {
+        if (!s.src || isDefaultAdj(s.adj)) return { ...s, adj: { ...ADJ_DEFAULTS } };
+        try {
+          const src = await applyAdjustments(s.src, s.adj);
+          return { ...s, src, adj: { ...ADJ_DEFAULTS } };
+        } catch {
+          return { ...s, adj: { ...ADJ_DEFAULTS } };
+        }
+      }));
+      setCaptureShots(baked);
+
       if (document.fonts && document.fonts.ready) {
         try { await document.fonts.ready; } catch (e) {}
       }
       await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+      await waitForImages(el);
 
       const canvas = await html2canvas(el, {
         backgroundColor: '#ffffff',
@@ -910,7 +1091,26 @@ export default function App() {
       showNotification('캡처 실패: ' + (e.message || e), 'error');
     } finally {
       el.classList.remove('dp-capture-mode');
+      setCaptureShots(null);
       setIsCapturing(false);
+    }
+  };
+
+  // 1번 슬롯 사진 → 500x500 JPG (th.jpg)
+  const downloadThumbnail = async () => {
+    const first = detailShots[0];
+    if (!first?.src) { showNotification('1번 사진이 없습니다', 'error'); return; }
+    try {
+      const dataUrl = await makeThumbnail(first.src, first.adj, 500);
+      const a = document.createElement('a');
+      a.href = dataUrl;
+      a.download = 'th.jpg';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      showNotification('썸네일 다운로드 완료 (th.jpg · 500×500)');
+    } catch (e) {
+      showNotification('썸네일 생성 실패: ' + (e.message || e), 'error');
     }
   };
 
@@ -1222,7 +1422,16 @@ export default function App() {
         {/* ============ Column 3: Results ============ */}
         <section className="col-span-4 overflow-y-auto p-5 bg-gray-50">
           <div className="flex items-center justify-between mb-4 gap-2 flex-wrap">
-            <h2 className="text-[11px] font-bold uppercase tracking-widest text-gray-400">3. 결과</h2>
+            <div className="flex items-center gap-2">
+              <h2 className="text-[11px] font-bold uppercase tracking-widest text-gray-400">3. 결과</h2>
+              <button onClick={() => toggleAutoWhiten(!autoWhiten)}
+                className={`text-[10px] font-bold uppercase tracking-wider px-2 py-1 border flex items-center gap-1 transition-colors ${
+                  autoWhiten ? 'bg-black text-white border-black' : 'bg-white text-gray-500 border-gray-300 hover:border-black'
+                }`}
+                title="합성컷 배경을 순백색으로 자동 처리 (가장자리 flood-fill)">
+                <LucideWand2 className="w-3 h-3" /> 배경흰색 {autoWhiten ? 'ON' : 'OFF'}
+              </button>
+            </div>
             {Object.values(results).some(r => r.status === 'done') && (
               <div className="flex gap-1.5">
                 <button onClick={openDetailPage}
@@ -1336,9 +1545,13 @@ export default function App() {
             <div className="flex items-center gap-2">
               <LucideFileText className="w-4 h-4" />
               <span className="font-extrabold text-sm uppercase tracking-tighter">상세페이지 생성</span>
-              <span className="text-[10px] text-gray-400 ml-2">1000px 고정 · JPG/PNG 다운로드</span>
+              <span className="text-[10px] text-gray-400 ml-2">1000px 고정 · JPG/PNG · 썸네일 500px</span>
             </div>
             <div className="flex items-center gap-2">
+              <button onClick={downloadThumbnail} disabled={isCapturing}
+                className="text-[11px] font-bold uppercase tracking-wider border border-black px-3 py-1.5 hover:bg-black hover:text-white disabled:opacity-50 flex items-center gap-1">
+                <LucideDownload className="w-3 h-3" /> 썸네일
+              </button>
               <button onClick={() => captureDetailPage('png')} disabled={isCapturing}
                 className="text-[11px] font-bold uppercase tracking-wider border border-black px-3 py-1.5 hover:bg-black hover:text-white disabled:opacity-50 flex items-center gap-1">
                 <LucideDownload className="w-3 h-3" /> PNG
@@ -1414,33 +1627,64 @@ export default function App() {
                   </div>
                 </div>
                 <div className="space-y-2">
-                  {detailShots.map((slot, idx) => (
-                    <div key={slot.id} className="flex items-start gap-2 p-2 border border-gray-200 bg-white">
-                      <span className="text-[10px] text-gray-400 font-bold pt-1 w-5">{idx + 1}</span>
-                      <div className="w-20 shrink-0">
-                        <ImageDropZone
-                          value={slot.src}
-                          onChange={updateDetailShot(slot.id)}
-                          label="업로드"
-                          icon={LucideUploadCloud}
-                        />
+                  {detailShots.map((slot, idx) => {
+                    const adjusted = !isDefaultAdj(slot.adj);
+                    return (
+                    <div key={slot.id} className="p-2 border border-gray-200 bg-white space-y-2">
+                      <div className="flex items-start gap-2">
+                        <span className="text-[10px] text-gray-400 font-bold pt-1 w-5">{idx + 1}</span>
+                        <div className="w-20 shrink-0">
+                          <ImageDropZone
+                            value={slot.src}
+                            onChange={updateDetailShot(slot.id)}
+                            label="업로드"
+                            icon={LucideUploadCloud}
+                          />
+                        </div>
+                        <div className="flex flex-col gap-0.5 ml-auto">
+                          <button onClick={() => moveDetailShot(slot.id, 'up')} disabled={idx === 0}
+                            className="p-1 hover:bg-gray-100 disabled:opacity-30" title="위로">
+                            <LucideArrowUp className="w-3 h-3" />
+                          </button>
+                          <button onClick={() => moveDetailShot(slot.id, 'down')} disabled={idx === detailShots.length - 1}
+                            className="p-1 hover:bg-gray-100 disabled:opacity-30" title="아래로">
+                            <LucideArrowDown className="w-3 h-3" />
+                          </button>
+                          <button onClick={() => removeDetailShot(slot.id)}
+                            className="p-1 hover:bg-gray-100 text-gray-400 hover:text-black" title="슬롯 삭제">
+                            <LucideTrash2 className="w-3 h-3" />
+                          </button>
+                        </div>
                       </div>
-                      <div className="flex flex-col gap-0.5 ml-auto">
-                        <button onClick={() => moveDetailShot(slot.id, 'up')} disabled={idx === 0}
-                          className="p-1 hover:bg-gray-100 disabled:opacity-30" title="위로">
-                          <LucideArrowUp className="w-3 h-3" />
-                        </button>
-                        <button onClick={() => moveDetailShot(slot.id, 'down')} disabled={idx === detailShots.length - 1}
-                          className="p-1 hover:bg-gray-100 disabled:opacity-30" title="아래로">
-                          <LucideArrowDown className="w-3 h-3" />
-                        </button>
-                        <button onClick={() => removeDetailShot(slot.id)}
-                          className="p-1 hover:bg-gray-100 text-gray-400 hover:text-black" title="슬롯 삭제">
-                          <LucideTrash2 className="w-3 h-3" />
-                        </button>
-                      </div>
+                      {slot.src && (
+                        <details className="border-t border-gray-100 pt-1.5">
+                          <summary className="text-[10px] font-bold uppercase tracking-wider text-gray-400 cursor-pointer list-none flex items-center gap-1">
+                            <LucideSettings className="w-3 h-3" />
+                            <span>보정</span>
+                            {adjusted && <span className="w-1.5 h-1.5 rounded-full bg-black inline-block ml-0.5" />}
+                          </summary>
+                          <div className="space-y-1.5 mt-2">
+                            {ADJ_CONTROLS.map(c => (
+                              <div key={c.key}>
+                                <div className="flex justify-between text-[10px] text-gray-500 mb-0.5">
+                                  <span>{c.label}</span>
+                                  <span className="tabular-nums">{slot.adj?.[c.key] ?? ADJ_DEFAULTS[c.key]}{c.unit}</span>
+                                </div>
+                                <input type="range" min={c.min} max={c.max}
+                                  value={slot.adj?.[c.key] ?? ADJ_DEFAULTS[c.key]}
+                                  onChange={(e) => updateDetailShotAdj(slot.id, c.key, Number(e.target.value))}
+                                  className="w-full accent-black h-1" />
+                              </div>
+                            ))}
+                            <button onClick={() => resetDetailShotAdj(slot.id)} disabled={!adjusted}
+                              className="mt-1 text-[10px] font-bold uppercase tracking-wider border border-gray-300 text-gray-600 px-2 py-1 hover:bg-gray-100 disabled:opacity-30 w-full flex items-center justify-center gap-1">
+                              <LucideRefreshCw className="w-3 h-3" /> 보정 초기화
+                            </button>
+                          </div>
+                        </details>
+                      )}
                     </div>
-                  ))}
+                  );})}
                   {detailShots.length === 0 && (
                     <div className="text-xs text-gray-400 text-center py-4 border border-dashed border-gray-200">
                       슬롯이 없습니다. 위 "슬롯 추가" 클릭
@@ -1453,7 +1697,7 @@ export default function App() {
             {/* Preview panel */}
             <main className="col-span-8 bg-gray-200 overflow-auto p-6 flex justify-center">
               <div className="shadow-2xl">
-                <DetailPage meta={detailMeta} shots={detailShots} />
+                <DetailPage meta={detailMeta} shots={captureShots || detailShots} />
               </div>
             </main>
           </div>
