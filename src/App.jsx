@@ -252,7 +252,7 @@ ${PRINT_TYPES.map(t => `- ${t.value}: ${t.label} — ${t.desc}`).join('\n')}
 // items: [{ printImages: [...], printType, placement: { side, widthPct, offsetY, offsetX } }]
 const composeView = async ({
   apiKey, productImageDataUrl, items,
-  viewLabel, viewInstruction, extraPrompt, aspectRatio
+  viewLabel, viewInstruction, extraPrompt, aspectRatio, backDetailImage
 }) => {
   // 모든 참고 이미지를 글로벌 번호로 매핑
   let globalIdx = 0;
@@ -342,7 +342,7 @@ const composeView = async ({
     ...(extraPrompt && extraPrompt.trim() ? { user_extra_instructions: extraPrompt.trim() } : {}),
   };
 
-  const prompt = `다음 JSON 명세에 따라 [제품 이미지]에 총 ${totalRefImages}장의 [프린트 이미지 #1]~[프린트 이미지 #${totalRefImages}]를 참고해서 ${items.length}개의 placement를 합성하세요.
+  const prompt = `다음 JSON 명세에 따라 [제품 이미지]에 총 ${totalRefImages}장의 [프린트 이미지 #1]~[프린트 이미지 #${totalRefImages}]를 참고해서 ${items.length}개의 placement를 합성하세요.${backDetailImage ? '\n※ 맨 마지막 이미지는 [뒷면 디테일 이미지]입니다. 거기 보이는 뒷면 디테일(요크·라벨·봉제·뒷판 그래픽 등)을 결과 뒷면에 그대로 반영하세요.' : ''}
 
 \`\`\`json
 ${JSON.stringify(spec, null, 2)}
@@ -361,6 +361,7 @@ ${JSON.stringify(spec, null, 2)}
     { text: prompt },
     { inlineData: { mimeType: 'image/jpeg', data: stripBase64(productImageDataUrl) } },
     ...allImages.map(img => ({ inlineData: { mimeType: 'image/jpeg', data: stripBase64(img) } })),
+    ...(backDetailImage ? [{ inlineData: { mimeType: 'image/jpeg', data: stripBase64(backDetailImage) } }] : []),
   ];
 
   const data = await callGemini({
@@ -654,7 +655,7 @@ const ImageZoomModal = ({ src, onClose }) => {
 export default function App() {
   const [productImage, setProductImage] = useState(null);
   const [productImageBack, setProductImageBack] = useState(null); // 뒷면 누끼 (선택)
-  const [backDetailNote, setBackDetailNote] = useState(''); // 뒷면 누끼 없을 때 유추용 디테일 메모
+  const [backDetailImage, setBackDetailImage] = useState(null); // 뒷면 누끼 없을 때 뒷면 디테일 참고 이미지
   const [zoomSrc, setZoomSrc] = useState(null); // 결과 이미지 원본 확대 뷰어
   const [prints, setPrints] = useState([]); // [{ id, images: [dataUrl, ...], placement: {side, offsetY, offsetX, widthPct}, analysis, analyzing, error }]
   const [results, setResults] = useState({}); // { [side]: { status, dataUrl, error } }
@@ -820,15 +821,17 @@ export default function App() {
       .map(p => ({ placement: p.placement, printImages: p.images, printType: p.analysis.type }));
     if (items.length === 0) return null;
 
-    // 후면: 뒷면 누끼가 있으면 직접 사용, 없으면 앞면 기반 유추(+디테일 메모 반영)
+    // 후면: 뒷면 누끼가 있으면 직접 사용, 없으면 앞면 기반 유추(+뒷면 디테일 이미지 반영)
     let productImg = productImage;
     let viewInstruction = view.viewInstruction;
+    let backDetailImg = null;
     if (viewKey === 'back_view') {
       if (productImageBack) {
         productImg = productImageBack;
         viewInstruction = '의류의 뒷면(등판)이 정면에서 보이는 후면 컷. [제품 이미지]가 곧 이 의류의 뒷면 누끼이므로, 그 형태·색상·아웃라인·모든 디테일을 그대로 사용해 프린트만 합성할 것 (상상·재구성 금지, 앞면과 동일한 방식으로 처리).';
-      } else if (backDetailNote.trim()) {
-        viewInstruction = view.viewInstruction + ` 추가로, 사용자가 알려준 뒷면 디테일을 반드시 반영할 것: ${backDetailNote.trim()}`;
+      } else if (backDetailImage) {
+        backDetailImg = backDetailImage;
+        viewInstruction = view.viewInstruction + ' 별도로 맨 마지막에 첨부된 [뒷면 디테일 이미지]에 보이는 뒷면 디테일(요크·뒷목 라벨·봉제선·뒷판 그래픽 등)을 이 뒷면에 위치·형태 그대로 반영할 것.';
       }
     }
 
@@ -840,6 +843,7 @@ export default function App() {
         items,
         viewLabel: view.label,
         viewInstruction,
+        backDetailImage: backDetailImg,
         extraPrompt,
         aspectRatio: '1:1',
       });
@@ -1185,14 +1189,18 @@ export default function App() {
 
           {!productImageBack && (
             <div className="mt-3">
-              <label className="text-[11px] font-bold uppercase tracking-wider mb-1 block">뒷면 디테일 메모 <span className="text-gray-400 font-normal normal-case">(선택)</span></label>
-              <textarea
-                value={backDetailNote}
-                onChange={(e) => setBackDetailNote(e.target.value)}
-                rows={2}
-                placeholder="뒷면 누끼가 없을 때 후면 유추에 참고 — 예) 등판에 요크, 뒷주머니 없음, 밑단·소매 시보리, 뒷목 라벨"
-                className="w-full border border-gray-300 px-3 py-2 text-xs focus:outline-none focus:border-black resize-none"
-              />
+              <label className="text-[11px] font-bold uppercase tracking-wider mb-2 block">뒷면 디테일 이미지 <span className="text-gray-400 font-normal normal-case">(선택)</span></label>
+              <div className="flex items-start gap-3">
+                <div className="w-32 shrink-0">
+                  <ImageDropZone
+                    value={backDetailImage}
+                    onChange={setBackDetailImage}
+                    label="뒷면 디테일 업로드"
+                    icon={LucideUploadCloud}
+                  />
+                </div>
+                <p className="text-[10px] text-gray-400 mt-1 max-w-sm">뒷면 누끼가 없을 때, 이 디테일 이미지(요크·라벨·봉제·뒷판 그래픽 등)를 뒷면 유추 결과에 반영합니다.</p>
+              </div>
             </div>
           )}
 
