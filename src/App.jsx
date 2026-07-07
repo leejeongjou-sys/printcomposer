@@ -17,6 +17,8 @@ const PRINT_TYPES = [
 const SIDES = [
   { key: 'front', label: '앞면' },
   { key: 'back',  label: '뒷면' },
+  { key: 'sleeve_l', label: '좌 소매' },
+  { key: 'sleeve_r', label: '우 소매' },
 ];
 
 // 면별 세로 위치 옵션
@@ -30,6 +32,16 @@ const OFFSET_Y_BY_SIDE = {
     { value: 'top',    label: '등 위 (목 아래)' },
     { value: 'center', label: '등 중앙' },
     { value: 'bottom', label: '허리 부근' },
+  ],
+  sleeve_l: [
+    { value: 'top',    label: '어깨쪽' },
+    { value: 'center', label: '소매 중간' },
+    { value: 'bottom', label: '소매끝' },
+  ],
+  sleeve_r: [
+    { value: 'top',    label: '어깨쪽' },
+    { value: 'center', label: '소매 중간' },
+    { value: 'bottom', label: '소매끝' },
   ],
 };
 
@@ -45,6 +57,16 @@ const OFFSET_X_BY_SIDE = {
     { value: 'center', label: '중앙' },
     { value: 'right',  label: '오른쪽' },
   ],
+  sleeve_l: [
+    { value: 'left',   label: '바깥쪽(앞)' },
+    { value: 'center', label: '중앙' },
+    { value: 'right',  label: '뒤쪽' },
+  ],
+  sleeve_r: [
+    { value: 'left',   label: '바깥쪽(앞)' },
+    { value: 'center', label: '중앙' },
+    { value: 'right',  label: '뒤쪽' },
+  ],
 };
 
 // 결과 view 정의 — 정면/후면 2개
@@ -52,13 +74,13 @@ const VIEWS = [
   {
     key: 'front_view',
     label: '정면',
-    sides: ['front'],
+    sides: ['front', 'sleeve_l', 'sleeve_r'],
     viewInstruction: '의류의 정면이 보이는 시점. 앞면 가슴이 정면에서 보이는 컷.',
   },
   {
     key: 'back_view',
     label: '후면',
-    sides: ['back'],
+    sides: ['back', 'sleeve_l', 'sleeve_r'],
     viewInstruction: '의류의 뒷면(등판)이 정면에서 보이는 후면 컷. [제품 이미지]를 베이스로, 그 제품과 완전히 동일한 의류(같은 색상·원단·실루엣·비율·소매/밑단/카라 형태)의 뒷모습을 자연스럽게 상상해서 그릴 것 — 다른 옷을 새로 만드는 게 아니라 같은 옷을 뒤에서 본 모습으로 재구성. **특히 전체적인 아웃라인(옷이 놓인 형태·자세·프레이밍·크기·기울기)은 [제품 이미지]를 그대로 따라갈 것**: 같은 배치로 놓인 같은 옷을 그대로 뒤집어 본 컷이어야 하며, 실루엣 외곽선이 [제품 이미지]와 거의 일치해야 함. 앞면 전용 요소(앞지퍼·앞주머니·앞 그래픽 등)는 뒷면에 두지 말고 등판·뒷목 라벨·요크 등 뒷면 구조로 자연스럽게 배치. 형태·비율·색감이 앞모습과 어긋나거나 왜곡되지 않도록 일관 유지.',
   },
 ];
@@ -248,6 +270,11 @@ const composeView = async ({
       placement.side === 'front' && placement.offsetX === 'right' ? '착용자 기준 오른쪽 가슴 = 보는 사람 기준 왼쪽' :
       null;
 
+    const isSleeve = placement.side === 'sleeve_l' || placement.side === 'sleeve_r';
+    const sleeveNote = isSleeve
+      ? `이 프린트는 ${placement.side === 'sleeve_l' ? '왼쪽' : '오른쪽'} 소매(팔)에 위치. 소매 원통 곡면을 따라 자연스럽게 감기고, 지금 이 뷰에서 실제로 보이는 부분만 원근에 맞게(가장자리로 갈수록 좁아지고 곡률로 살짝 휘어짐) 합성할 것. 좌우값(바깥쪽=앞에서 잘 보임 / 뒤쪽=뒤에서 잘 보임)에 따라 이 뷰에서 보이는 정도가 달라지므로, 이 시점에서 가려져 안 보이는 부분은 억지로 그리지 말 것.`
+      : null;
+
     const imageRefs = printImages.map((_, j) => {
       globalIdx++;
       return {
@@ -281,7 +308,8 @@ const composeView = async ({
         type_label: typeInfo?.label,
         visual_traits: typeInfo?.desc,
       },
-      rendering_note: '명시된 크기 비율과 위치를 정확히 지켜 정면으로 또렷이 합성',
+      ...(sleeveNote ? { sleeve_note: sleeveNote } : {}),
+      rendering_note: '명시된 크기 비율과 위치를 정확히 지켜 이 뷰에서 보이는 대로 또렷이 합성',
     };
   });
   const totalRefImages = globalIdx;
@@ -587,9 +615,47 @@ const DetailPage = ({ meta, shots }) => (
   </div>
 );
 
+// ==================== IMAGE ZOOM (원본 크기 + 손바닥 드래그 이동) ====================
+const ImageZoomModal = ({ src, onClose }) => {
+  const [pos, setPos] = useState({ x: 0, y: 0 });
+  const drag = useRef(null);
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  const onDown = (e) => { drag.current = { sx: e.clientX, sy: e.clientY, ox: pos.x, oy: pos.y }; };
+  const onMove = (e) => {
+    if (!drag.current) return;
+    setPos({ x: drag.current.ox + (e.clientX - drag.current.sx), y: drag.current.oy + (e.clientY - drag.current.sy) });
+  };
+  const onUp = () => { drag.current = null; };
+  return (
+    <div className="fixed inset-0 z-[1100] bg-black/85 select-none"
+      onMouseMove={onMove} onMouseUp={onUp} onMouseLeave={onUp}>
+      <div className="absolute inset-0 overflow-hidden cursor-grab active:cursor-grabbing" onMouseDown={onDown}>
+        <img src={src} draggable={false} alt=""
+          style={{ position: 'absolute', left: '50%', top: '50%',
+            transform: `translate(calc(-50% + ${pos.x}px), calc(-50% + ${pos.y}px))`,
+            maxWidth: 'none', maxHeight: 'none' }} />
+      </div>
+      <button onClick={onClose}
+        className="absolute top-4 right-4 z-10 bg-white/90 hover:bg-white text-black p-2 border border-black">
+        <LucideX className="w-5 h-5" />
+      </button>
+      <div className="absolute bottom-4 left-1/2 -translate-x-1/2 text-white/80 text-xs bg-black/60 px-3 py-1.5 pointer-events-none">
+        ✋ 드래그로 이동 · 원본 크기 · Esc 닫기
+      </div>
+    </div>
+  );
+};
+
 // ==================== APP ====================
 export default function App() {
   const [productImage, setProductImage] = useState(null);
+  const [productImageBack, setProductImageBack] = useState(null); // 뒷면 누끼 (선택)
+  const [backDetailNote, setBackDetailNote] = useState(''); // 뒷면 누끼 없을 때 유추용 디테일 메모
+  const [zoomSrc, setZoomSrc] = useState(null); // 결과 이미지 원본 확대 뷰어
   const [prints, setPrints] = useState([]); // [{ id, images: [dataUrl, ...], placement: {side, offsetY, offsetX, widthPct}, analysis, analyzing, error }]
   const [results, setResults] = useState({}); // { [side]: { status, dataUrl, error } }
   const [detailShotResults, setDetailShotResults] = useState({}); // { [sourceKey]: { status, dataUrl, error } } — 매거진 디테일 컷
@@ -739,6 +805,12 @@ export default function App() {
     return true;
   };
 
+  // 해당 뷰(정면/후면)에 합성할 나염 부분이 있는지 (소매는 양쪽 뷰 모두 포함)
+  const hasViewItems = (viewKey) => {
+    const view = VIEWS.find(v => v.key === viewKey);
+    return !!view && prints.some(p => p.analysis && p.placement && view.sides.includes(p.placement.side));
+  };
+
   // 내부: view 1개 합성 (isComposing 카운트 관리 X)
   const composeViewInternal = async (viewKey) => {
     const view = VIEWS.find(v => v.key === viewKey);
@@ -748,14 +820,26 @@ export default function App() {
       .map(p => ({ placement: p.placement, printImages: p.images, printType: p.analysis.type }));
     if (items.length === 0) return null;
 
+    // 후면: 뒷면 누끼가 있으면 직접 사용, 없으면 앞면 기반 유추(+디테일 메모 반영)
+    let productImg = productImage;
+    let viewInstruction = view.viewInstruction;
+    if (viewKey === 'back_view') {
+      if (productImageBack) {
+        productImg = productImageBack;
+        viewInstruction = '의류의 뒷면(등판)이 정면에서 보이는 후면 컷. [제품 이미지]가 곧 이 의류의 뒷면 누끼이므로, 그 형태·색상·아웃라인·모든 디테일을 그대로 사용해 프린트만 합성할 것 (상상·재구성 금지, 앞면과 동일한 방식으로 처리).';
+      } else if (backDetailNote.trim()) {
+        viewInstruction = view.viewInstruction + ` 추가로, 사용자가 알려준 뒷면 디테일을 반드시 반영할 것: ${backDetailNote.trim()}`;
+      }
+    }
+
     setResults(r => ({ ...r, [view.key]: { status: 'pending' } }));
     try {
       const dataUrl = await composeView({
         apiKey,
-        productImageDataUrl: productImage,
+        productImageDataUrl: productImg,
         items,
         viewLabel: view.label,
-        viewInstruction: view.viewInstruction,
+        viewInstruction,
         extraPrompt,
         aspectRatio: '1:1',
       });
@@ -1063,16 +1147,27 @@ export default function App() {
         <section className="col-span-7 border-r border-black overflow-y-auto p-5 bg-white">
           <h2 className="text-[11px] font-bold uppercase tracking-widest text-gray-400 mb-3">1. 입력</h2>
 
-          <div className="grid grid-cols-2 gap-4 mb-6">
+          <div className="grid grid-cols-3 gap-4">
             <div>
-              <label className="text-[11px] font-bold uppercase tracking-wider mb-2 block">제품 누끼</label>
+              <label className="text-[11px] font-bold uppercase tracking-wider mb-2 block">제품 누끼 (앞면)</label>
               <ImageDropZone
                 value={productImage}
                 onChange={setProductImage}
-                label="제품 누끼 업로드"
+                label="앞면 누끼 업로드"
                 icon={LucideUploadCloud}
               />
               <p className="text-[10px] text-gray-400 mt-1">결과 비율은 이 이미지 비율을 따릅니다 · 흰 배경/누끼 권장</p>
+            </div>
+
+            <div>
+              <label className="text-[11px] font-bold uppercase tracking-wider mb-2 block">뒷면 누끼 <span className="text-gray-400 font-normal normal-case">(선택)</span></label>
+              <ImageDropZone
+                value={productImageBack}
+                onChange={setProductImageBack}
+                label="뒷면 누끼 업로드"
+                icon={LucideUploadCloud}
+              />
+              <p className="text-[10px] text-gray-400 mt-1">{productImageBack ? '후면을 이 이미지로 직접 합성' : '없으면 앞면 기반 유추 (아래 메모)'}</p>
             </div>
 
             <div>
@@ -1080,15 +1175,28 @@ export default function App() {
               <ImageDropZone
                 value={null}
                 onMultiple={addPrintPart}
-                label="한 부분의 사진들을 한꺼번에 드래그"
+                label="사진 여러 장 드래그"
                 icon={LucidePlus}
                 multiple
               />
-              <p className="text-[10px] text-gray-400 mt-1">같은 나염(예: 앞가슴)의 사진 여러 장을 <b>한 번에</b> → 한 부분으로 묶여 자동 분석. 크기 참고 사진(착장샷·자 등)도 같이 넣으면 크기 자동 산정.</p>
+              <p className="text-[10px] text-gray-400 mt-1">같은 나염의 사진 여러 장을 <b>한 번에</b> → 한 부분으로 묶여 분석. 크기 참고 사진도 같이 넣으면 크기 자동 산정.</p>
             </div>
           </div>
 
-          <h2 className="text-[11px] font-bold uppercase tracking-widest text-gray-400 mb-4 pt-3 border-t border-gray-200">2. 분석 / 배치</h2>
+          {!productImageBack && (
+            <div className="mt-3">
+              <label className="text-[11px] font-bold uppercase tracking-wider mb-1 block">뒷면 디테일 메모 <span className="text-gray-400 font-normal normal-case">(선택)</span></label>
+              <textarea
+                value={backDetailNote}
+                onChange={(e) => setBackDetailNote(e.target.value)}
+                rows={2}
+                placeholder="뒷면 누끼가 없을 때 후면 유추에 참고 — 예) 등판에 요크, 뒷주머니 없음, 밑단·소매 시보리, 뒷목 라벨"
+                className="w-full border border-gray-300 px-3 py-2 text-xs focus:outline-none focus:border-black resize-none"
+              />
+            </div>
+          )}
+
+          <h2 className="text-[11px] font-bold uppercase tracking-widest text-gray-400 mb-4 mt-6 pt-3 border-t border-gray-200">2. 분석 / 배치</h2>
 
           {prints.length === 0 ? (
             <div className="text-center text-gray-400 text-sm py-20 border border-dashed border-gray-200">
@@ -1096,7 +1204,7 @@ export default function App() {
               <p>왼쪽에서 나염 부분을 추가하면<br />여기에 사진·종류·크기·위치 카드가 표시됩니다</p>
             </div>
           ) : (
-            <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-3 items-start">
               {prints.map((p, idx) => {
                 const pl = p.placement || DEFAULT_PLACEMENT;
                 const yOpts = OFFSET_Y_BY_SIDE[pl.side] || [];
@@ -1246,7 +1354,7 @@ export default function App() {
           <div className="grid grid-cols-3 gap-2 mt-2">
             <button
               onClick={() => composeOneView('front_view')}
-              disabled={isComposing || !prints.some(p => p.analysis && p.placement?.side === 'front')}
+              disabled={isComposing || !hasViewItems('front_view')}
               className="py-2 border border-black text-black text-[11px] font-bold uppercase tracking-wider disabled:opacity-30 hover:bg-black hover:text-white flex items-center justify-center gap-1"
               title="앞면만 합성"
             >
@@ -1256,7 +1364,7 @@ export default function App() {
             </button>
             <button
               onClick={() => composeOneView('back_view')}
-              disabled={isComposing || !prints.some(p => p.analysis && p.placement?.side === 'back')}
+              disabled={isComposing || !hasViewItems('back_view')}
               className="py-2 border border-black text-black text-[11px] font-bold uppercase tracking-wider disabled:opacity-30 hover:bg-black hover:text-white flex items-center justify-center gap-1"
               title="뒷면만 합성"
             >
@@ -1318,7 +1426,7 @@ export default function App() {
                     </div>
                   ) : (
                     <>
-                      <img src={r.dataUrl} alt={view.label} className="w-full h-full object-contain" />
+                      <img src={r.dataUrl} alt={view.label} onClick={() => setZoomSrc(r.dataUrl)} className="w-full h-full object-contain cursor-zoom-in" />
                       <div className="absolute top-1.5 left-1.5 bg-black text-white text-[10px] font-bold uppercase tracking-wider px-2 py-0.5">
                         {view.label}
                       </div>
@@ -1358,7 +1466,7 @@ export default function App() {
                         </div>
                       ) : (
                         <>
-                          <img src={r.dataUrl} alt={labelText} className="w-full h-full object-contain" />
+                          <img src={r.dataUrl} alt={labelText} onClick={() => setZoomSrc(r.dataUrl)} className="w-full h-full object-contain cursor-zoom-in" />
                           <div className="absolute top-1 left-1 bg-black text-white text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5">
                             {labelText}
                           </div>
@@ -1552,6 +1660,8 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {zoomSrc && <ImageZoomModal src={zoomSrc} onClose={() => setZoomSrc(null)} />}
 
       {/* Settings Modal */}
       {showSettings && (
