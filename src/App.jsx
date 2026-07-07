@@ -65,6 +65,9 @@ const VIEWS = [
 
 const MODEL_ID = 'gemini-3.1-flash-image-preview';
 
+// 나염 부분 기본 배치값
+const DEFAULT_PLACEMENT = { side: 'front', offsetY: 'center', offsetX: 'center', widthPct: 25 };
+
 // ==================== UTILITIES ====================
 const delay = (ms) => new Promise(r => setTimeout(r, ms));
 
@@ -99,6 +102,9 @@ const compressImage = (dataUrl, maxWidth = 2048, quality = 0.92) => new Promise(
     const canvas = document.createElement('canvas');
     canvas.width = width; canvas.height = height;
     const ctx = canvas.getContext('2d');
+    // 투명 PNG 누끼 → JPEG 변환 시 투명 영역이 검정으로 깔리는 것 방지 (반드시 흰색 먼저)
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, width, height);
     ctx.imageSmoothingQuality = 'high';
     ctx.drawImage(img, 0, 0, width, height);
     resolve(canvas.toDataURL('image/jpeg', quality));
@@ -159,8 +165,9 @@ const callGemini = async ({ apiKey, parts, expectImage, imageConfig }) => {
   return data;
 };
 
-const analyzePrint = async ({ apiKey, printImageDataUrl }) => {
-  const prompt = `이 이미지는 의류에 사용되는 프린트(또는 자수)의 클로즈업 사진입니다.
+const analyzePrint = async ({ apiKey, images }) => {
+  const imgs = Array.isArray(images) ? images : [images];
+  const prompt = `아래 이미지들은 의류에 쓰이는 하나의 프린트(또는 자수) 부분을 여러 각도·거리에서 찍은 사진입니다 (총 ${imgs.length}장).
 
 작업 1: 종류 판별
 다음 종류 중 가장 가까운 것을 정확히 1개 선택하세요.
@@ -170,8 +177,8 @@ ${PRINT_TYPES.map(t => `- ${t.value}: ${t.label} — ${t.desc}`).join('\n')}
 
 판단 근거(광택, 입체감, 실 구조, 잉크 두께, 가장자리 등)를 1~2문장으로 적어주세요.
 
-작업 2: 위치 추천
-이 프린트가 의류의 어디에 들어가는 게 일반적·자연스러운지 추천하세요.
+작업 2: 위치·크기 추천
+이 프린트가 의류의 어디에 들어가는 게 일반적·자연스러운지, 그리고 크기를 추천하세요.
 - side: "front" (앞면 — 가슴, 앞판) 또는 "back" (뒷면 — 등판)
 - vertical: "top" / "center" / "bottom"
 - horizontal: "left" / "center" / "right"
@@ -179,12 +186,13 @@ ${PRINT_TYPES.map(t => `- ${t.value}: ${t.label} — ${t.desc}`).join('\n')}
   - 작은 가슴 로고/와펜류: 8-15
   - 중간 가슴 그래픽: 18-30
   - 등판 큰 그래픽/대형 레터링: 40-70
-판단 기준: 그래픽의 종류·크기·복잡도·텍스트 유무·일반적인 의류 디자인 관행.
+
+**크기 산정 시 중요**: 제공된 여러 장 중에는 프린트가 실제 의류/사람 위에 있어 크기를 가늠할 수 있는 사진(전체 착장샷, 자·손 등 스케일 기준이 함께 찍힌 사진)이 섞여 있을 수 있습니다. 그런 사진이 있으면 그것을 **우선 근거**로 삼아 의류 가로폭 대비 프린트 가로폭을 실제 비율로 추정하세요. 클로즈업만 있으면 그래픽 종류·복잡도·관행으로 추정합니다.
 
 반드시 다음 JSON 형식으로만 응답:
 {
   "type": "<위 value 중 하나>",
-  "notes": "<판단 근거>",
+  "notes": "<판단 근거 (크기 근거로 삼은 사진이 있으면 언급)>",
   "suggested_placement": {
     "side": "front" | "back",
     "vertical": "top" | "center" | "bottom",
@@ -197,7 +205,7 @@ ${PRINT_TYPES.map(t => `- ${t.value}: ${t.label} — ${t.desc}`).join('\n')}
     apiKey,
     parts: [
       { text: prompt },
-      { inlineData: { mimeType: 'image/jpeg', data: stripBase64(printImageDataUrl) } }
+      ...imgs.map(img => ({ inlineData: { mimeType: 'image/jpeg', data: stripBase64(img) } })),
     ],
     expectImage: false
   });
@@ -280,7 +288,7 @@ const composeView = async ({
 
   const spec = {
     input_format: {
-      product_image: '제품 누끼 (배경이 흰색이거나 투명한 의류 사진). 이 비율과 구도를 그대로 출력에 유지할 것.',
+      product_image: '제품 누끼 (의류만 오려낸 사진). 제품의 실루엣·색상·형태·비율만 사용하고, 이미지에 배경/그림자/바닥/환경이 있어도 전부 무시하고 버릴 것 (재현 절대 금지).',
       print_images: '실제 제작된 프린트의 클로즈업 사진. 각 프린트의 색상/형태/질감/잉크 두께/실 결이 그대로 보임.',
     },
     view: {
@@ -296,8 +304,9 @@ const composeView = async ({
       resolution: '4K',
       composition: '제품을 정사각형 캔버스 중앙에 배치. 제품의 실루엣/색상/형태는 [제품 이미지]를 그대로 따를 것 (제품 비율 자체는 변경 금지, 캔버스만 1:1).',
     },
-    must_preserve: ['제품의 실루엣', '제품 원래 색상', '제품의 형태와 비율', '제품 이미지의 구도'],
+    must_preserve: ['제품의 실루엣', '제품 원래 색상', '제품의 형태와 비율'],
     must_apply: [
+      '입력 [제품 이미지]의 배경·그림자·바닥·스튜디오 환경은 조금이라도 재현하지 말 것. 제품 실루엣만 남기고 나머지 전 영역을 새 순백 #FFFFFF로 교체. 특히 스튜디오/선반/가구 같은 흐릿한 배경을 절대 생성하지 말 것.',
       '배경은 반드시 #FFFFFF 순백색 단색으로 균일하게 (다른 색·그라데이션·그림자 절대 금지)',
       '배경에 먼지·티끌·점·반점·노이즈·입자·얼룩이 단 하나도 없을 것 — 제품 실루엣 바깥은 전부 픽셀 단위로 완벽히 깨끗한 #FFFFFF 단색. 제품 가장자리도 지저분한 외곽선/헤일로 없이 깔끔하게 분리.',
       '프린트는 [프린트 이미지 #N]에 보이는 색상/형태/질감/잉크특성을 그대로 옮길 것 (재해석/재생성/스타일화 금지)',
@@ -381,7 +390,7 @@ ${typeInfo ? `\n프린트 종류: ${typeInfo.label} — 시각 특성: ${typeInf
 };
 
 // ==================== UI HELPERS ====================
-const ImageDropZone = ({ value, onChange, label, icon: Icon, height = 'aspect-square', multiple = false }) => {
+const ImageDropZone = ({ value, onChange, onMultiple, label, icon: Icon, height = 'aspect-square', multiple = false }) => {
   const inputRef = useRef(null);
   const processFile = async (file) => {
     const dataUrl = await fileToDataUrl(file);
@@ -391,10 +400,10 @@ const ImageDropZone = ({ value, onChange, label, icon: Icon, height = 'aspect-sq
     const files = Array.from(fileList || []).filter(f => f && f.type?.startsWith('image/'));
     if (files.length === 0) return;
     if (multiple) {
-      for (const f of files) {
-        const processed = await processFile(f);
-        onChange(processed);
-      }
+      const urls = [];
+      for (const f of files) urls.push(await processFile(f));
+      if (onMultiple) onMultiple(urls);
+      else urls.forEach(u => onChange(u));
     } else {
       const processed = await processFile(files[0]);
       onChange(processed);
@@ -651,8 +660,7 @@ const DetailPage = ({ meta, shots }) => (
 // ==================== APP ====================
 export default function App() {
   const [productImage, setProductImage] = useState(null);
-  const [prints, setPrints] = useState([]); // [{ id, images: [dataUrl, ...], analysis, analyzing, error }]
-  const [placements, setPlacements] = useState([]); // [{ side, printId, widthPct, offsetY, offsetX }]
+  const [prints, setPrints] = useState([]); // [{ id, images: [dataUrl, ...], placement: {side, offsetY, offsetX, widthPct}, analysis, analyzing, error }]
   const [results, setResults] = useState({}); // { [side]: { status, dataUrl, error } }
   const [detailShotResults, setDetailShotResults] = useState({}); // { [sourceKey]: { status, dataUrl, error } } — 매거진 디테일 컷
   const [detailSelectionKeys, setDetailSelectionKeys] = useState([]); // ["printId|imgIdx", ...] — 디테일 소스로 선택된 사진 키들
@@ -674,40 +682,41 @@ export default function App() {
     setTimeout(() => setNotification(null), 3500);
   };
 
-  // ---------- print pool handlers ----------
-  const addPrint = async (dataUrl) => {
+  // ---------- 나염 부분 handlers ----------
+  // 배치 추천 → placement 형태로 변환
+  const placementFromSuggestion = (sp, fallback) => sp ? {
+    side: ['front', 'back'].includes(sp.side) ? sp.side : 'front',
+    offsetY: sp.vertical,
+    offsetX: sp.horizontal,
+    widthPct: sp.width_pct,
+  } : fallback;
+
+  // 한 나염 부분 추가 (사진 여러 장 = 한 부분)
+  const addPrintPart = async (dataUrls) => {
+    const urls = Array.isArray(dataUrls) ? dataUrls : [dataUrls];
+    if (urls.length === 0) return;
     const id = `p_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-    const newPrint = { id, images: [dataUrl], analysis: null, analyzing: true, error: null };
+    const newPrint = { id, images: urls, placement: { ...DEFAULT_PLACEMENT }, analysis: null, analyzing: true, error: null };
     setPrints(prev => [...prev, newPrint]);
     if (!apiKey) {
       setPrints(prev => prev.map(p => p.id === id ? { ...p, analyzing: false, error: 'API Key 미설정' } : p));
       return;
     }
     try {
-      const analysis = await analyzePrint({ apiKey, printImageDataUrl: dataUrl });
-      setPrints(prev => prev.map(p => p.id === id ? { ...p, analysis, analyzing: false } : p));
-      // 자동 placement: 추천된 면이 비어있으면 자동 생성
-      if (analysis.suggested_placement) {
-        const sp = analysis.suggested_placement;
-        setPlacements(prev => {
-          if (prev.find(pl => pl.side === sp.side)) return prev; // 이미 있으면 유지
-          return [...prev, {
-            side: sp.side,
-            printId: id,
-            widthPct: sp.width_pct,
-            offsetY: sp.vertical,
-            offsetX: sp.horizontal,
-          }];
-        });
-      }
+      const analysis = await analyzePrint({ apiKey, images: urls });
+      setPrints(prev => prev.map(p => p.id === id
+        ? { ...p, analysis, analyzing: false, placement: placementFromSuggestion(analysis.suggested_placement, p.placement) }
+        : p));
     } catch (e) {
       setPrints(prev => prev.map(p => p.id === id ? { ...p, analyzing: false, error: e.message } : p));
     }
   };
 
-  const addPrintRef = (printId) => async (dataUrl) => {
+  // 한 부분에 사진 더 추가
+  const addPrintRefs = (printId) => (dataUrls) => {
+    const urls = Array.isArray(dataUrls) ? dataUrls : [dataUrls];
     setPrints(prev => prev.map(p => p.id === printId
-      ? { ...p, images: [...p.images, dataUrl] }
+      ? { ...p, images: [...p.images, ...urls] }
       : p));
   };
 
@@ -746,8 +755,10 @@ export default function App() {
     if (!target || !apiKey) return;
     setPrints(prev => prev.map(p => p.id === id ? { ...p, analyzing: true, error: null } : p));
     try {
-      const analysis = await analyzePrint({ apiKey, printImageDataUrl: target.images[0] });
-      setPrints(prev => prev.map(p => p.id === id ? { ...p, analysis, analyzing: false } : p));
+      const analysis = await analyzePrint({ apiKey, images: target.images });
+      setPrints(prev => prev.map(p => p.id === id
+        ? { ...p, analysis, analyzing: false, placement: placementFromSuggestion(analysis.suggested_placement, p.placement) }
+        : p));
     } catch (e) {
       setPrints(prev => prev.map(p => p.id === id ? { ...p, analyzing: false, error: e.message } : p));
     }
@@ -761,7 +772,6 @@ export default function App() {
 
   const removePrint = (id) => {
     setPrints(prev => prev.filter(p => p.id !== id));
-    setPlacements(prev => prev.filter(pl => pl.printId !== id));
     // 해당 print의 모든 디테일 소스 선택/결과 제거
     setDetailSelectionKeys(prev => prev.filter(k => !k.startsWith(`${id}|`)));
     setDetailShotResults(r => Object.fromEntries(Object.entries(r).filter(([k]) => !k.startsWith(`${id}|`))));
@@ -775,18 +785,18 @@ export default function App() {
     setDetailSelectionKeys(prev => prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key]);
   };
 
-  // ---------- placement handlers ----------
-  const togglePlacement = (side) => {
-    setPlacements(prev => {
-      const has = prev.find(pl => pl.side === side);
-      if (has) return prev.filter(pl => pl.side !== side);
-      const defaultPrintId = prints[0]?.id || null;
-      return [...prev, { side, printId: defaultPrintId, widthPct: 30, offsetY: 'center', offsetX: 'center' }];
-    });
-  };
-
-  const updatePlacement = (side, field, value) => {
-    setPlacements(prev => prev.map(pl => pl.side === side ? { ...pl, [field]: value } : pl));
+  // ---------- placement handlers (부분별) ----------
+  const updatePrintPlacement = (printId, field, value) => {
+    setPrints(prev => prev.map(p => {
+      if (p.id !== printId) return p;
+      const placement = { ...(p.placement || DEFAULT_PLACEMENT), [field]: value };
+      // side 변경 시 세로/좌우 값이 해당 면에 없으면 center로 보정
+      if (field === 'side') {
+        if (!(OFFSET_Y_BY_SIDE[value] || []).some(o => o.value === placement.offsetY)) placement.offsetY = 'center';
+        if (!(OFFSET_X_BY_SIDE[value] || []).some(o => o.value === placement.offsetX)) placement.offsetX = 'center';
+      }
+      return { ...p, placement };
+    }));
   };
 
   // ---------- compose ----------
@@ -794,13 +804,9 @@ export default function App() {
   const validateCompose = () => {
     if (!apiKey) { showNotification('API Key를 먼저 설정하세요', 'error'); return false; }
     if (!productImage) { showNotification('제품컷을 업로드하세요', 'error'); return false; }
-    if (prints.length === 0) { showNotification('프린트를 1개 이상 업로드하세요', 'error'); return false; }
-    if (placements.length === 0) { showNotification('배치할 위치를 선택하세요', 'error'); return false; }
-    for (const pl of placements) {
-      const print = prints.find(p => p.id === pl.printId);
-      if (!print) { showNotification(`${SIDES.find(s => s.key === pl.side)?.label}: 프린트가 선택되지 않음`, 'error'); return false; }
-      if (!print.analysis) { showNotification('아직 분석 중인 프린트가 있습니다', 'error'); return false; }
-    }
+    if (prints.length === 0) { showNotification('나염 부분을 1개 이상 추가하세요', 'error'); return false; }
+    if (prints.some(p => p.analyzing)) { showNotification('아직 분석 중인 나염 부분이 있습니다', 'error'); return false; }
+    if (!prints.some(p => p.analysis)) { showNotification('분석 완료된 나염 부분이 없습니다', 'error'); return false; }
     return true;
   };
 
@@ -808,12 +814,9 @@ export default function App() {
   const composeViewInternal = async (viewKey) => {
     const view = VIEWS.find(v => v.key === viewKey);
     if (!view) return;
-    const items = placements
-      .filter(pl => view.sides.includes(pl.side))
-      .map(pl => {
-        const print = prints.find(p => p.id === pl.printId);
-        return { placement: pl, printImages: print.images, printType: print.analysis.type };
-      });
+    const items = prints
+      .filter(p => p.analysis && p.placement && view.sides.includes(p.placement.side))
+      .map(p => ({ placement: p.placement, printImages: p.images, printType: p.analysis.type }));
     if (items.length === 0) return null;
 
     setResults(r => ({ ...r, [view.key]: { status: 'pending' } }));
@@ -845,9 +848,9 @@ export default function App() {
     if (!validateCompose()) return;
     const view = VIEWS.find(v => v.key === viewKey);
     if (!view) return;
-    const hasItems = placements.some(pl => view.sides.includes(pl.side));
+    const hasItems = prints.some(p => p.analysis && p.placement && view.sides.includes(p.placement.side));
     if (!hasItems) {
-      showNotification(`${view.label}에 합성할 placement가 없습니다`, 'error');
+      showNotification(`${view.label}에 배치된 나염 부분이 없습니다`, 'error');
       return;
     }
     setComposeCount(c => c + 1);
@@ -1166,37 +1169,18 @@ export default function App() {
             </div>
 
             <div>
-              <label className="text-[11px] font-bold uppercase tracking-wider mb-2 block">프린트 풀</label>
-              {prints.length > 0 && (
-                <div className="grid grid-cols-3 gap-1.5 mb-2">
-                  {prints.map((p, idx) => (
-                    <div key={p.id} className="relative group aspect-square border border-black bg-gray-50 overflow-hidden">
-                      <img src={p.images[0]} alt="" className="w-full h-full object-contain" />
-                      <div className="absolute top-0.5 left-0.5 bg-black text-white text-[9px] font-bold px-1">#{idx + 1}</div>
-                      {p.images.length > 1 && (
-                        <div className="absolute bottom-0.5 left-0.5 bg-black text-white text-[9px] font-bold px-1">+{p.images.length - 1}</div>
-                      )}
-                      {p.analyzing && (
-                        <div className="absolute inset-0 bg-white/70 flex items-center justify-center">
-                          <LucideLoader2 className="w-4 h-4 animate-spin text-black" />
-                        </div>
-                      )}
-                      <button onClick={() => removePrint(p.id)}
-                        className="absolute top-0.5 right-0.5 bg-white border border-black p-0.5 opacity-0 group-hover:opacity-100 hover:bg-black hover:text-white">
-                        <LucideX className="w-2.5 h-2.5" />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
+              <label className="text-[11px] font-bold uppercase tracking-wider mb-2 block">나염 부분 추가</label>
               <ImageDropZone
                 value={null}
-                onChange={addPrint}
-                label="프린트 추가 (드래그 다중 가능)"
+                onMultiple={addPrintPart}
+                label="한 부분의 사진들을 한꺼번에 드래그"
                 icon={LucidePlus}
                 multiple
               />
-              <p className="text-[10px] text-gray-400 mt-2">여러 장 한꺼번에 드래그 OK · 각각 자동 분석</p>
+              <p className="text-[10px] text-gray-400 mt-2">같은 나염(예: 앞가슴)의 사진 여러 장을 <b>한 번에</b> → 한 부분으로 묶여 자동 분석됩니다. 크기 참고 사진(착장샷·자 등)도 같이 넣으면 크기를 자동으로 잡아줍니다. 다른 나염은 다시 드래그하세요.</p>
+              {prints.length > 0 && (
+                <p className="text-[10px] text-gray-500 mt-2 font-bold">현재 {prints.length}개 나염 부분 · 오른쪽 카드에서 편집</p>
+              )}
             </div>
           </div>
         </section>
@@ -1208,159 +1192,132 @@ export default function App() {
           {prints.length === 0 ? (
             <div className="text-center text-gray-400 text-sm py-20 border border-dashed border-gray-200">
               <LucideWand2 className="w-8 h-8 mx-auto mb-2 opacity-50" />
-              <p>프린트를 업로드하면<br />여기에 분석 결과와 배치 옵션이 표시됩니다</p>
+              <p>왼쪽에서 나염 부분을 추가하면<br />여기에 사진·종류·크기·위치 카드가 표시됩니다</p>
             </div>
           ) : (
             <div className="space-y-3">
-              {/* 컴팩트 분석 행 — 프린트별 1줄 (썸네일 + 종류 셀렉트 + 참고사진 +) */}
-              <div className="space-y-1.5">
-                {prints.map((p, idx) => (
-                  <details key={p.id} open className="border border-gray-200 bg-white open:border-black">
-                    <summary className="flex items-center gap-2 p-2 cursor-pointer list-none hover:bg-gray-50">
-                      <div className="w-9 h-9 border border-gray-200 shrink-0 overflow-hidden bg-gray-50">
+              {prints.map((p, idx) => {
+                const pl = p.placement || DEFAULT_PLACEMENT;
+                const yOpts = OFFSET_Y_BY_SIDE[pl.side] || [];
+                const xOpts = OFFSET_X_BY_SIDE[pl.side] || [];
+                return (
+                  <div key={p.id} className="border border-black bg-white">
+                    {/* 헤더: 썸네일 + 종류 + 재분석/삭제 */}
+                    <div className="flex items-center gap-2 p-2 border-b border-gray-200 bg-gray-50">
+                      <div className="w-9 h-9 border border-gray-200 shrink-0 overflow-hidden bg-white">
                         <img src={p.images[0]} alt="" className="w-full h-full object-contain" />
                       </div>
-                      <span className="text-[11px] font-bold uppercase tracking-wider shrink-0">#{idx + 1}</span>
+                      <span className="text-[11px] font-bold uppercase tracking-wider shrink-0">나염 #{idx + 1}</span>
                       {p.analyzing ? (
                         <span className="text-xs text-gray-500 flex items-center gap-1"><LucideLoader2 className="w-3 h-3 animate-spin" /> 분석 중...</span>
                       ) : p.error ? (
                         <span className="text-xs text-red-600 truncate">{p.error}</span>
                       ) : p.analysis ? (
                         <select value={p.analysis.type}
-                          onClick={(e) => e.stopPropagation()}
                           onChange={(e) => updatePrintType(p.id, e.target.value)}
                           className="text-xs border border-gray-300 px-2 py-1 focus:outline-none focus:border-black">
                           {PRINT_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
                         </select>
                       ) : null}
-                      {p.images.length > 1 && (
-                        <span className="text-[10px] text-gray-400 ml-1">참고 +{p.images.length - 1}</span>
-                      )}
                       <div className="ml-auto flex items-center gap-1">
-                        <button onClick={(e) => { e.stopPropagation(); reanalyzePrint(p.id); }} disabled={p.analyzing}
-                          className="p-1 hover:bg-gray-100 disabled:opacity-30" title="다시 분석">
+                        <button onClick={() => reanalyzePrint(p.id)} disabled={p.analyzing}
+                          className="p-1 hover:bg-gray-100 disabled:opacity-30" title="다시 분석 (모든 사진 참고)">
                           <LucideRefreshCw className={`w-3.5 h-3.5 ${p.analyzing ? 'animate-spin' : ''}`} />
                         </button>
-                        <button onClick={(e) => { e.stopPropagation(); removePrint(p.id); }}
-                          className="p-1 hover:bg-gray-100 text-gray-400 hover:text-black" title="삭제">
+                        <button onClick={() => removePrint(p.id)}
+                          className="p-1 hover:bg-gray-100 text-gray-400 hover:text-black" title="이 나염 부분 삭제">
                           <LucideTrash2 className="w-3.5 h-3.5" />
                         </button>
                       </div>
-                    </summary>
-                    <div className="border-t border-gray-200 p-2 bg-gray-50">
+                    </div>
+
+                    <div className="p-2 space-y-3">
                       {p.analysis?.notes && (
-                        <p className="text-[10px] text-gray-600 leading-relaxed mb-2">{p.analysis.notes}</p>
+                        <p className="text-[10px] text-gray-500 leading-relaxed">{p.analysis.notes}</p>
                       )}
-                      <div className="flex items-center justify-between mb-1.5">
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400">참고 사진 ({p.images.length}장)</span>
-                      </div>
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-[10px] text-gray-400">★ 체크 = 디테일 컷 생성 소스</span>
-                      </div>
-                      <div className="flex gap-1.5 flex-wrap">
-                        {p.images.map((img, imgIdx) => {
-                          const selected = isDetailSelected(p.id, imgIdx);
-                          return (
-                            <div key={imgIdx}
-                              className={`relative group w-12 h-12 border bg-white overflow-hidden cursor-pointer ${selected ? 'border-black border-2' : 'border-gray-300'}`}
-                              onClick={() => toggleDetailSelection(p.id, imgIdx)}
-                              title={selected ? '디테일 소스에서 제외' : '디테일 소스로 선택'}>
-                              <img src={img} alt="" className="w-full h-full object-contain" />
-                              <div className="absolute top-0 left-0 bg-black text-white text-[8px] font-bold px-0.5">
-                                {imgIdx === 0 ? '메인' : imgIdx + 1}
+
+                      {/* 사진들 + 디테일 출력 선택 */}
+                      <div>
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400">사진 ({p.images.length}장)</span>
+                          <span className="text-[10px] text-gray-400">★ = 디테일로 출력</span>
+                        </div>
+                        <div className="flex gap-1.5 flex-wrap">
+                          {p.images.map((img, imgIdx) => {
+                            const selected = isDetailSelected(p.id, imgIdx);
+                            return (
+                              <div key={imgIdx}
+                                className={`relative group w-14 h-14 border bg-white overflow-hidden cursor-pointer ${selected ? 'border-black border-2' : 'border-gray-300'}`}
+                                onClick={() => toggleDetailSelection(p.id, imgIdx)}
+                                title={selected ? '디테일 출력에서 제외' : '디테일로 출력할 사진으로 선택'}>
+                                <img src={img} alt="" className="w-full h-full object-contain" />
+                                <div className="absolute top-0 left-0 bg-black text-white text-[8px] font-bold px-0.5">
+                                  {imgIdx === 0 ? '메인' : imgIdx + 1}
+                                </div>
+                                {selected && (
+                                  <div className="absolute bottom-0 left-0 bg-black text-white text-[9px] font-bold px-1 leading-none py-0.5">★</div>
+                                )}
+                                {p.images.length > 1 && (
+                                  <button onClick={(e) => { e.stopPropagation(); removePrintRef(p.id, imgIdx); }}
+                                    className="absolute top-0 right-0 bg-white border border-black p-0.5 opacity-0 group-hover:opacity-100 hover:bg-black hover:text-white">
+                                    <LucideX className="w-2 h-2" />
+                                  </button>
+                                )}
                               </div>
-                              {selected && (
-                                <div className="absolute bottom-0 left-0 bg-black text-white text-[9px] font-bold px-1 leading-none py-0.5">★</div>
-                              )}
-                              {p.images.length > 1 && (
-                                <button onClick={(e) => { e.stopPropagation(); removePrintRef(p.id, imgIdx); }}
-                                  className="absolute top-0 right-0 bg-white border border-black p-0.5 opacity-0 group-hover:opacity-100 hover:bg-black hover:text-white">
-                                  <LucideX className="w-2 h-2" />
-                                </button>
-                              )}
-                            </div>
-                          );
-                        })}
-                        <div className="w-12 h-12">
-                          <ImageDropZone
-                            value={null}
-                            onChange={addPrintRef(p.id)}
-                            label="+"
-                            icon={LucidePlus}
-                            multiple
-                          />
+                            );
+                          })}
+                          <div className="w-14 h-14">
+                            <ImageDropZone
+                              value={null}
+                              onMultiple={addPrintRefs(p.id)}
+                              label="+"
+                              icon={LucidePlus}
+                              multiple
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* 위치 / 크기 */}
+                      <div className="grid grid-cols-2 gap-2 pt-2 border-t border-gray-100">
+                        <div>
+                          <span className="text-[10px] text-gray-400 uppercase tracking-wider">면</span>
+                          <select value={pl.side}
+                            onChange={(e) => updatePrintPlacement(p.id, 'side', e.target.value)}
+                            className="w-full text-xs border border-gray-300 px-2 py-1 focus:outline-none focus:border-black mt-0.5">
+                            {SIDES.map(s => <option key={s.key} value={s.key}>{s.label}</option>)}
+                          </select>
+                        </div>
+                        <div>
+                          <span className="text-[10px] text-gray-400 uppercase tracking-wider">크기 (자동·수정가능)</span>
+                          <div className="flex items-center gap-1 mt-0.5">
+                            <input type="number" value={pl.widthPct} min="1" max="80"
+                              onChange={(e) => updatePrintPlacement(p.id, 'widthPct', Number(e.target.value))}
+                              className="w-full border border-gray-300 px-2 py-1 text-xs focus:outline-none focus:border-black" />
+                            <span className="text-[10px] text-gray-400 shrink-0">% 폭</span>
+                          </div>
+                        </div>
+                        <div>
+                          <span className="text-[10px] text-gray-400 uppercase tracking-wider">세로</span>
+                          <select value={pl.offsetY}
+                            onChange={(e) => updatePrintPlacement(p.id, 'offsetY', e.target.value)}
+                            className="w-full text-xs border border-gray-300 px-2 py-1 focus:outline-none focus:border-black mt-0.5">
+                            {yOpts.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                          </select>
+                        </div>
+                        <div>
+                          <span className="text-[10px] text-gray-400 uppercase tracking-wider">좌우</span>
+                          <select value={pl.offsetX}
+                            onChange={(e) => updatePrintPlacement(p.id, 'offsetX', e.target.value)}
+                            className="w-full text-xs border border-gray-300 px-2 py-1 focus:outline-none focus:border-black mt-0.5">
+                            {xOpts.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                          </select>
                         </div>
                       </div>
                     </div>
-                  </details>
-                ))}
-              </div>
-
-              {/* 위치 / 크기 — 분리 헤더 없이 바로 카드 */}
-              <div>
-                <div className="grid grid-cols-2 gap-2">
-                  {SIDES.map(side => {
-                    const placement = placements.find(pl => pl.side === side.key);
-                    const checked = !!placement;
-                    const yOpts = OFFSET_Y_BY_SIDE[side.key] || [];
-                    const xOpts = OFFSET_X_BY_SIDE[side.key] || [];
-                    return (
-                      <div key={side.key} className={`border p-3 ${checked ? 'border-black bg-gray-50' : 'border-gray-200'}`}>
-                        <label className="flex items-center gap-2 cursor-pointer mb-1">
-                          <input type="checkbox" checked={checked}
-                            onChange={() => togglePlacement(side.key)}
-                            className="accent-black" />
-                          <span className="text-sm font-bold">{side.label}</span>
-                        </label>
-                        {checked && (
-                          <div className="space-y-2 mt-3">
-                            <div>
-                              <span className="text-[10px] text-gray-400 uppercase tracking-wider">프린트 선택</span>
-                              <div className="grid grid-cols-4 gap-1 mt-0.5">
-                                {prints.map((p, idx) => (
-                                  <button key={p.id}
-                                    onClick={() => updatePlacement(side.key, 'printId', p.id)}
-                                    className={`aspect-square border overflow-hidden bg-white relative ${
-                                      placement.printId === p.id ? 'border-black border-2' : 'border-gray-200 hover:border-gray-400'
-                                    }`}
-                                    title={`프린트 #${idx + 1}${p.images.length > 1 ? ` (+${p.images.length - 1})` : ''}`}>
-                                    <img src={p.images[0]} alt="" className="w-full h-full object-contain" />
-                                    <div className="absolute top-0 left-0 bg-black text-white text-[8px] font-bold px-0.5">{idx + 1}</div>
-                                  </button>
-                                ))}
-                              </div>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <input type="number" value={placement.widthPct} min="1" max="80"
-                                onChange={(e) => updatePlacement(side.key, 'widthPct', Number(e.target.value))}
-                                className="w-16 border border-gray-300 px-2 py-1 text-xs focus:outline-none focus:border-black" />
-                              <span className="text-[11px] text-gray-500">% (의류 가로폭 대비)</span>
-                            </div>
-                            <div>
-                              <span className="text-[10px] text-gray-400 uppercase tracking-wider">세로</span>
-                              <select value={placement.offsetY}
-                                onChange={(e) => updatePlacement(side.key, 'offsetY', e.target.value)}
-                                className="w-full text-xs border border-gray-300 px-2 py-1 focus:outline-none focus:border-black mt-0.5">
-                                {yOpts.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                              </select>
-                            </div>
-                            {xOpts.length > 1 && (
-                              <div>
-                                <span className="text-[10px] text-gray-400 uppercase tracking-wider">좌우</span>
-                                <select value={placement.offsetX}
-                                  onChange={(e) => updatePlacement(side.key, 'offsetX', e.target.value)}
-                                  className="w-full text-xs border border-gray-300 px-2 py-1 focus:outline-none focus:border-black mt-0.5">
-                                  {xOpts.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                                </select>
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
+                  </div>
+                );
+              })}
             </div>
           )}
 
@@ -1378,7 +1335,7 @@ export default function App() {
 
           <button
             onClick={composeAllViews}
-            disabled={isComposing || prints.length === 0 || placements.length === 0}
+            disabled={isComposing || !prints.some(p => p.analysis)}
             className="w-full mt-3 py-3 bg-black text-white text-sm font-bold uppercase tracking-wider disabled:opacity-30 hover:bg-gray-800 flex items-center justify-center gap-2"
           >
             {isComposing
@@ -1388,7 +1345,7 @@ export default function App() {
           <div className="grid grid-cols-3 gap-2 mt-2">
             <button
               onClick={() => composeOneView('front_view')}
-              disabled={isComposing || prints.length === 0 || placements.length === 0}
+              disabled={isComposing || !prints.some(p => p.analysis && p.placement?.side === 'front')}
               className="py-2 border border-black text-black text-[11px] font-bold uppercase tracking-wider disabled:opacity-30 hover:bg-black hover:text-white flex items-center justify-center gap-1"
               title="앞면만 합성"
             >
@@ -1398,7 +1355,7 @@ export default function App() {
             </button>
             <button
               onClick={() => composeOneView('back_view')}
-              disabled={isComposing || prints.length === 0 || placements.length === 0}
+              disabled={isComposing || !prints.some(p => p.analysis && p.placement?.side === 'back')}
               className="py-2 border border-black text-black text-[11px] font-bold uppercase tracking-wider disabled:opacity-30 hover:bg-black hover:text-white flex items-center justify-center gap-1"
               title="뒷면만 합성"
             >
