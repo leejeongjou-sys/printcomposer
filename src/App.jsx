@@ -59,7 +59,7 @@ const VIEWS = [
     key: 'back_view',
     label: '후면',
     sides: ['back'],
-    viewInstruction: '의류의 뒷면이 보이는 시점. 등판이 정면에서 보이는 후면 컷.',
+    viewInstruction: '의류의 뒷면(등판)이 정면에서 보이는 후면 컷. [제품 이미지]를 베이스로, 그 제품과 완전히 동일한 의류(같은 색상·원단·실루엣·비율·소매/밑단/카라 형태)의 뒷모습을 자연스럽게 상상해서 그릴 것. [제품 이미지]가 앞모습이면 그 옷을 뒤에서 본 모습으로 재구성하는 것이지, 다른 옷을 새로 만드는 게 아님. 앞면 전용 요소(앞지퍼·앞주머니·앞 그래픽 등)는 뒷면에 두지 말고 등판·뒷목 라벨·요크 등 뒷면에 맞는 구조로 자연스럽게 배치. 제품의 전체 형태·비율·색감·실루엣이 앞모습과 어긋나거나 왜곡되지 않도록 완벽히 일관되게 유지.',
   },
 ];
 
@@ -288,7 +288,7 @@ const composeView = async ({
 
   const spec = {
     input_format: {
-      product_image: '제품 누끼 (의류만 오려낸 사진). 제품의 실루엣·색상·형태·비율만 사용하고, 이미지에 배경/그림자/바닥/환경이 있어도 전부 무시하고 버릴 것 (재현 절대 금지).',
+      product_image: '제품 누끼 (의류만 오려낸 사진). 제품의 실루엣·색상·형태·비율을 사용.',
       print_images: '실제 제작된 프린트의 클로즈업 사진. 각 프린트의 색상/형태/질감/잉크 두께/실 결이 그대로 보임.',
     },
     view: {
@@ -299,16 +299,11 @@ const composeView = async ({
     output: {
       aspect_ratio: '1:1',
       aspect_ratio_note: '결과 캔버스는 정확히 정사각형(1:1). 앞면/뒷면 모두 같은 크기로 출력되어야 함.',
-      background: '#FFFFFF',
-      background_note: '배경은 반드시 완전한 순백색 #FFFFFF (RGB 255,255,255)로 전 영역을 균일하게 채울 것. 그라데이션·비네팅·텍스처·그림자·회색/크림 톤·노이즈·입자(grain)·먼지/티끌/반점(specks/dust)·JPEG 압축 얼룩 일체 금지. 스튜디오 누끼처럼 페인트로 칠한 듯 완전히 매끈하고 깨끗한 단색 흰색.',
       resolution: '4K',
       composition: '제품을 정사각형 캔버스 중앙에 배치. 제품의 실루엣/색상/형태는 [제품 이미지]를 그대로 따를 것 (제품 비율 자체는 변경 금지, 캔버스만 1:1).',
     },
     must_preserve: ['제품의 실루엣', '제품 원래 색상', '제품의 형태와 비율'],
     must_apply: [
-      '입력 [제품 이미지]의 배경·그림자·바닥·스튜디오 환경은 조금이라도 재현하지 말 것. 제품 실루엣만 남기고 나머지 전 영역을 새 순백 #FFFFFF로 교체. 특히 스튜디오/선반/가구 같은 흐릿한 배경을 절대 생성하지 말 것.',
-      '배경은 반드시 #FFFFFF 순백색 단색으로 균일하게 (다른 색·그라데이션·그림자 절대 금지)',
-      '배경에 먼지·티끌·점·반점·노이즈·입자·얼룩이 단 하나도 없을 것 — 제품 실루엣 바깥은 전부 픽셀 단위로 완벽히 깨끗한 #FFFFFF 단색. 제품 가장자리도 지저분한 외곽선/헤일로 없이 깔끔하게 분리.',
       '프린트는 [프린트 이미지 #N]에 보이는 색상/형태/질감/잉크특성을 그대로 옮길 것 (재해석/재생성/스타일화 금지)',
       '원단의 주름·음영·결이 프린트 위에 자연스럽게 반영',
       '각 placement의 size.width_pct_of_garment_width 값을 픽셀 단위로 정확히 반영 (의류 가로 폭의 X%)',
@@ -328,7 +323,7 @@ ${JSON.stringify(spec, null, 2)}
 2. 어떤 참고 사진의 시각 특성도 절대 변형/재해석하지 말고 그대로 옮길 것.
 3. \`size.width_pct_of_garment_width\`는 의류 가로 폭 대비 프린트 가로 폭의 % — 화면에서 의류 폭을 측정하고 그 N%로 정확히 합성할 것 (임의로 키우거나 줄이지 말 것).
 4. \`must_preserve\` 항목은 절대 수정 금지.
-5. 결과 이미지는 반드시 1:1 정사각형 캔버스, 배경은 #FFFFFF 순백색. 제품은 캔버스 중앙에 자연스럽게 배치하되 제품 자체의 형태/비율은 [제품 이미지]를 따를 것.
+5. 결과 이미지는 반드시 1:1 정사각형 캔버스. 제품은 캔버스 중앙에 자연스럽게 배치하되 제품 자체의 형태/비율은 [제품 이미지]를 따를 것.
 6. \`user_extra_instructions\`가 있다면 사용자가 직접 추가한 디테일 요구사항이므로, 위 규칙과 충돌하지 않는 한 우선적으로 반영할 것 (특히 크기·위치 미세조정).`;
 
   const allImages = items.flatMap(item => item.printImages);
@@ -492,73 +487,6 @@ const waitForImages = (el) => {
   ));
 };
 
-// 가장자리 flood-fill로 배경을 순백색으로 처리.
-// 코너 배경색 기준(globalTol) + 인접 픽셀 연속성(localTol) 이중 게이트로
-// 어두운/밝은 제품 모두 보존하면서 배경 얼룩만 흰색으로 채운다.
-const whitenBackground = (dataUrl, opts = {}) => new Promise((resolve, reject) => {
-  const { localTol = 32, globalTol = 100, dilate = 1 } = opts;
-  const img = new Image();
-  img.onload = () => {
-    try {
-      const w = img.naturalWidth, h = img.naturalHeight, N = w * h;
-      const canvas = document.createElement('canvas');
-      canvas.width = w; canvas.height = h;
-      const ctx = canvas.getContext('2d', { willReadFrequently: true });
-      ctx.drawImage(img, 0, 0);
-      const id = ctx.getImageData(0, 0, w, h);
-      const d = id.data;
-
-      // 코너 패치 평균 = 배경 기준색
-      let rR = 0, rG = 0, rB = 0, cnt = 0;
-      const patch = 8;
-      for (const [cx, cy] of [[0, 0], [w - 1, 0], [0, h - 1], [w - 1, h - 1]]) {
-        for (let yy = 0; yy < patch; yy++) for (let xx = 0; xx < patch; xx++) {
-          const px = Math.min(w - 1, Math.max(0, cx + (cx === 0 ? xx : -xx)));
-          const py = Math.min(h - 1, Math.max(0, cy + (cy === 0 ? yy : -yy)));
-          const i = (py * w + px) * 4; rR += d[i]; rG += d[i + 1]; rB += d[i + 2]; cnt++;
-        }
-      }
-      rR /= cnt; rG /= cnt; rB /= cnt;
-      const gTol2 = globalTol * globalTol, lTol2 = localTol * localTol;
-      const distRef2 = (i) => { const a = d[i] - rR, b = d[i + 1] - rG, c = d[i + 2] - rB; return a * a + b * b + c * c; };
-      const distPx2 = (i, j) => { const a = d[i] - d[j], b = d[i + 1] - d[j + 1], c = d[i + 2] - d[j + 2]; return a * a + b * b + c * c; };
-
-      let bg = new Uint8Array(N);
-      const stack = new Int32Array(N);
-      let sp = 0;
-      const seed = (p) => { if (!bg[p] && distRef2(p * 4) <= gTol2) { bg[p] = 1; stack[sp++] = p; } };
-      for (let x = 0; x < w; x++) { seed(x); seed((h - 1) * w + x); }
-      for (let y = 0; y < h; y++) { seed(y * w); seed(y * w + (w - 1)); }
-
-      while (sp > 0) {
-        const p = stack[--sp], i = p * 4, x = p % w, y = (p / w) | 0;
-        const tryN = (q) => { if (!bg[q]) { const j = q * 4; if (distRef2(j) <= gTol2 && distPx2(i, j) <= lTol2) { bg[q] = 1; stack[sp++] = q; } } };
-        if (x > 0) tryN(p - 1);
-        if (x < w - 1) tryN(p + 1);
-        if (y > 0) tryN(p - w);
-        if (y < h - 1) tryN(p + w);
-      }
-
-      // 얇은 회색 헤일로 제거용 팽창
-      for (let it = 0; it < dilate; it++) {
-        const next = bg.slice();
-        for (let p = 0; p < N; p++) {
-          if (bg[p]) continue;
-          const x = p % w, y = (p / w) | 0;
-          if ((x > 0 && bg[p - 1]) || (x < w - 1 && bg[p + 1]) || (y > 0 && bg[p - w]) || (y < h - 1 && bg[p + w])) next[p] = 1;
-        }
-        bg = next;
-      }
-
-      for (let p = 0; p < N; p++) if (bg[p]) { const i = p * 4; d[i] = 255; d[i + 1] = 255; d[i + 2] = 255; }
-      ctx.putImageData(id, 0, 0);
-      resolve(canvas.toDataURL('image/jpeg', 0.95));
-    } catch (e) { reject(e); }
-  };
-  img.onerror = reject;
-  img.src = dataUrl;
-});
-
 // 정사각 썸네일 생성 (중앙 크롭 cover + 보정 적용)
 const makeThumbnail = (dataUrl, adj, size = 500, quality = 0.92) => new Promise((resolve, reject) => {
   const img = new Image();
@@ -667,7 +595,6 @@ export default function App() {
   const [composeCount, setComposeCount] = useState(0);
   const isComposing = composeCount > 0;
   const [extraPrompt, setExtraPrompt] = useState('');
-  const [autoWhiten, setAutoWhiten] = useState(true); // 합성컷 배경 자동 흰색 처리
   const [showDetailPage, setShowDetailPage] = useState(false);
   const [detailMeta, setDetailMeta] = useState(DETAIL_PAGE_DEFAULTS);
   const [detailShots, setDetailShots] = useState([]); // [{ id, src }] 동적 슬롯
@@ -821,7 +748,7 @@ export default function App() {
 
     setResults(r => ({ ...r, [view.key]: { status: 'pending' } }));
     try {
-      const rawUrl = await composeView({
+      const dataUrl = await composeView({
         apiKey,
         productImageDataUrl: productImage,
         items,
@@ -830,12 +757,7 @@ export default function App() {
         extraPrompt,
         aspectRatio: '1:1',
       });
-      let dataUrl = rawUrl, whitenedUrl = null;
-      if (autoWhiten) {
-        try { whitenedUrl = await whitenBackground(rawUrl); dataUrl = whitenedUrl; }
-        catch { /* 화이트닝 실패 시 원본 사용 */ }
-      }
-      setResults(r => ({ ...r, [view.key]: { status: 'done', dataUrl, rawUrl, whitenedUrl, whitened: !!whitenedUrl } }));
+      setResults(r => ({ ...r, [view.key]: { status: 'done', dataUrl } }));
       return 'done';
     } catch (e) {
       setResults(r => ({ ...r, [view.key]: { status: 'error', error: e.message } }));
@@ -936,23 +858,6 @@ export default function App() {
     Object.entries(results).forEach(([side, r], i) => {
       if (r.status === 'done') setTimeout(() => downloadResult(side, r.dataUrl), i * 200);
     });
-  };
-
-  // 배경 흰색 처리 ON/OFF — 기존 결과에도 즉시 재적용
-  const toggleAutoWhiten = async (on) => {
-    setAutoWhiten(on);
-    const keys = Object.keys(results).filter(k => results[k]?.status === 'done' && results[k]?.rawUrl);
-    if (on && keys.some(k => !results[k].whitenedUrl)) showNotification('배경 흰색 처리 적용 중...');
-    for (const key of keys) {
-      const r = results[key];
-      if (on) {
-        let wl = r.whitenedUrl;
-        if (!wl) { try { wl = await whitenBackground(r.rawUrl); } catch { wl = r.rawUrl; } }
-        setResults(prev => ({ ...prev, [key]: { ...prev[key], dataUrl: wl, whitenedUrl: wl, whitened: true } }));
-      } else {
-        setResults(prev => ({ ...prev, [key]: { ...prev[key], dataUrl: prev[key].rawUrl, whitened: false } }));
-      }
-    }
   };
 
   // ---------- detail page ----------
@@ -1152,11 +1057,11 @@ export default function App() {
       {/* Main 3-column layout */}
       <main className="flex-1 grid grid-cols-12 overflow-hidden">
 
-        {/* ============ Column 1: Inputs ============ */}
-        <section className="col-span-3 border-r border-black overflow-y-auto p-5 bg-white">
-          <h2 className="text-[11px] font-bold uppercase tracking-widest text-gray-400 mb-4">1. 입력</h2>
+        {/* ============ Left: Inputs + Analysis/Placement ============ */}
+        <section className="col-span-7 border-r border-black overflow-y-auto p-5 bg-white">
+          <h2 className="text-[11px] font-bold uppercase tracking-widest text-gray-400 mb-3">1. 입력</h2>
 
-          <div className="space-y-6">
+          <div className="grid grid-cols-2 gap-4 mb-6">
             <div>
               <label className="text-[11px] font-bold uppercase tracking-wider mb-2 block">제품 누끼</label>
               <ImageDropZone
@@ -1165,7 +1070,7 @@ export default function App() {
                 label="제품 누끼 업로드"
                 icon={LucideUploadCloud}
               />
-              <p className="text-[10px] text-gray-400 mt-1">결과 비율은 이 이미지 비율을 그대로 따릅니다 · 흰 배경/누끼 권장</p>
+              <p className="text-[10px] text-gray-400 mt-1">결과 비율은 이 이미지 비율을 따릅니다 · 흰 배경/누끼 권장</p>
             </div>
 
             <div>
@@ -1177,17 +1082,11 @@ export default function App() {
                 icon={LucidePlus}
                 multiple
               />
-              <p className="text-[10px] text-gray-400 mt-2">같은 나염(예: 앞가슴)의 사진 여러 장을 <b>한 번에</b> → 한 부분으로 묶여 자동 분석됩니다. 크기 참고 사진(착장샷·자 등)도 같이 넣으면 크기를 자동으로 잡아줍니다. 다른 나염은 다시 드래그하세요.</p>
-              {prints.length > 0 && (
-                <p className="text-[10px] text-gray-500 mt-2 font-bold">현재 {prints.length}개 나염 부분 · 오른쪽 카드에서 편집</p>
-              )}
+              <p className="text-[10px] text-gray-400 mt-1">같은 나염(예: 앞가슴)의 사진 여러 장을 <b>한 번에</b> → 한 부분으로 묶여 자동 분석. 크기 참고 사진(착장샷·자 등)도 같이 넣으면 크기 자동 산정.</p>
             </div>
           </div>
-        </section>
 
-        {/* ============ Column 2: Analysis & Placement ============ */}
-        <section className="col-span-5 border-r border-black overflow-y-auto p-5 bg-white">
-          <h2 className="text-[11px] font-bold uppercase tracking-widest text-gray-400 mb-4">2. 분석 / 배치</h2>
+          <h2 className="text-[11px] font-bold uppercase tracking-widest text-gray-400 mb-4 pt-3 border-t border-gray-200">2. 분석 / 배치</h2>
 
           {prints.length === 0 ? (
             <div className="text-center text-gray-400 text-sm py-20 border border-dashed border-gray-200">
@@ -1376,19 +1275,10 @@ export default function App() {
           </div>
         </section>
 
-        {/* ============ Column 3: Results ============ */}
-        <section className="col-span-4 overflow-y-auto p-5 bg-gray-50">
+        {/* ============ Right: Results ============ */}
+        <section className="col-span-5 overflow-y-auto p-5 bg-gray-50">
           <div className="flex items-center justify-between mb-4 gap-2 flex-wrap">
-            <div className="flex items-center gap-2">
-              <h2 className="text-[11px] font-bold uppercase tracking-widest text-gray-400">3. 결과</h2>
-              <button onClick={() => toggleAutoWhiten(!autoWhiten)}
-                className={`text-[10px] font-bold uppercase tracking-wider px-2 py-1 border flex items-center gap-1 transition-colors ${
-                  autoWhiten ? 'bg-black text-white border-black' : 'bg-white text-gray-500 border-gray-300 hover:border-black'
-                }`}
-                title="합성컷 배경을 순백색으로 자동 처리 (가장자리 flood-fill)">
-                <LucideWand2 className="w-3 h-3" /> 배경흰색 {autoWhiten ? 'ON' : 'OFF'}
-              </button>
-            </div>
+            <h2 className="text-[11px] font-bold uppercase tracking-widest text-gray-400">3. 결과</h2>
             {Object.values(results).some(r => r.status === 'done') && (
               <div className="flex gap-1.5">
                 <button onClick={openDetailPage}
