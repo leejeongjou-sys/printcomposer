@@ -116,7 +116,7 @@ const fileToDataUrl = (file) => new Promise((resolve, reject) => {
   reader.readAsDataURL(file);
 });
 
-const compressImage = (dataUrl, maxWidth = 2048, quality = 0.92) => new Promise((resolve, reject) => {
+const compressImage = (dataUrl, maxWidth = 3072, quality = 0.92) => new Promise((resolve, reject) => {
   const img = new Image();
   img.onload = () => {
     let { width, height } = img;
@@ -328,16 +328,18 @@ const composeView = async ({
       aspect_ratio: '1:1',
       aspect_ratio_note: '결과 캔버스는 정확히 정사각형(1:1). 앞면/뒷면 모두 같은 크기로 출력되어야 함.',
       resolution: '4K',
+      quality: '전체적으로 선명하고 왜곡·블러 없이. 제품 원단의 디테일·질감이 원본 사진만큼 또렷하게 살아있어야 하며, 프린트만 원단에 자연스럽게 통합.',
       background: '순백색 #FFFFFF — 제품을 배경에서 완전히 오려낸 누끼로 흰 배경 위에 얹은 형태 (스튜디오/그림자/바닥/환경 없음).',
       composition: '제품을 정사각형 캔버스 중앙에 배치. 제품의 실루엣/색상/형태는 [제품 이미지]를 그대로 따를 것 (제품 비율 자체는 변경 금지, 캔버스만 1:1).',
     },
-    must_preserve: ['제품의 실루엣', '제품 원래 색상', '제품의 형태와 비율', '제품의 모든 디테일(지퍼·슬라이더·봉제선/스티치·단추·끈·시보리(리브)·카라·소매단·라벨·포켓 등)을 [제품 이미지] 그대로 — 형태·개수·위치·마감을 절대 변형/재디자인하지 말 것'],
+    must_preserve: ['제품의 실루엣', '제품 원래 색상', '제품의 형태와 비율', '제품의 모든 디테일(지퍼·슬라이더·봉제선/스티치·단추·끈·시보리(리브)·카라·소매단·라벨·포켓 등)을 [제품 이미지] 그대로 — 형태·개수·위치·마감을 절대 변형/재디자인하지 말 것', '제품 원단의 질감·직조결·주름/접힘·봉제선을 [제품 이미지] 원본 해상도 그대로 선명하게 유지 (흐려짐·뭉개짐·왜곡·해상도 저하 금지)'],
     must_apply: [
       '제품을 배경에서 완전히 오려내어(누끼) 순백색 #FFFFFF 배경 위에 그대로 얹을 것. 제품 실루엣 바깥은 전부 균일한 순백색이며, 스튜디오·그림자·바닥 등 다른 배경 요소는 넣지 말 것.',
       '프린트는 [프린트 이미지 #N]에 보이는 색상/형태/질감/잉크특성을 그대로 옮길 것 (재해석/재생성/스타일화 금지)',
-      '원단의 주름·음영·결이 프린트 위에 자연스럽게 반영',
+      '핵심: 프린트/자수를 평면 스티커처럼 얹지 말 것. 원단의 주름·접힘·굴곡·드레이프를 따라 프린트가 자연스럽게 휘어지고 변형되어야 하며(주름 골에서는 함께 꺾이고 좁아짐), 원단 주름에서 생기는 음영(그림자·하이라이트)이 프린트 위에도 그대로 지나가야 함. 프린트는 원단 표면에 실제로 인쇄/자수된 것처럼 원단 질감·굴곡과 하나로 통합될 것 (프린트 위에 원단결·주름 음영이 비치는 멀티플라이 블렌드 느낌). 나염이면 잉크가 원단에 눌려 주름 따라 미세하게 갈라지고, 자수면 실이 주름 위로 입체적으로 얹힘.',
+      '프린트가 얹히는 영역 외의 제품(원단·실루엣·주름·봉제·모든 디테일)은 [제품 이미지]와 픽셀 단위로 동일하게 보존 — 옷 전체를 다시 렌더링하거나 흐리게/왜곡/재해석하지 말 것. 이것은 원본 제품 사진 위에 프린트만 통합하는 "편집"이지 옷을 새로 그리는 게 아님.',
       '각 placement의 size.width_pct_of_garment_width 값을 픽셀 단위로 정확히 반영 (의류 가로 폭의 X%)',
-      '4K 화질, 디테일과 텍스처가 살아있도록',
+      '4K 화질, 디테일과 텍스처가 원본만큼 또렷하게 살아있도록',
     ],
     ...(extraPrompt && extraPrompt.trim() ? { user_extra_instructions: extraPrompt.trim() } : {}),
   };
@@ -1164,14 +1166,30 @@ export default function App() {
             </div>
 
             <div>
-              <label className="text-[11px] font-bold uppercase tracking-wider mb-2 block">뒷면 누끼 <span className="text-gray-400 font-normal normal-case">(선택)</span></label>
-              <ImageDropZone
-                value={productImageBack}
-                onChange={setProductImageBack}
-                label="뒷면 누끼 업로드"
-                icon={LucideUploadCloud}
-              />
-              <p className="text-[10px] text-gray-400 mt-1">{productImageBack ? '후면을 이 이미지로 직접 합성' : '없으면 앞면 기반 유추 (아래 메모)'}</p>
+              <label className="text-[11px] font-bold uppercase tracking-wider mb-2 block">뒷면 <span className="text-gray-400 font-normal normal-case">(선택)</span></label>
+              <div className="space-y-2">
+                <div>
+                  <span className="text-[9px] text-gray-400 block mb-0.5">누끼</span>
+                  <ImageDropZone
+                    value={productImageBack}
+                    onChange={setProductImageBack}
+                    label="뒷면 누끼"
+                    icon={LucideUploadCloud}
+                    height="h-24"
+                  />
+                </div>
+                <div>
+                  <span className="text-[9px] text-gray-400 block mb-0.5">디테일</span>
+                  <ImageDropZone
+                    value={backDetailImage}
+                    onChange={setBackDetailImage}
+                    label="뒷면 디테일"
+                    icon={LucideImage}
+                    height="h-24"
+                  />
+                </div>
+              </div>
+              <p className="text-[10px] text-gray-400 mt-1">누끼 있으면 후면 직접 합성 · 없으면 디테일로 유추 반영</p>
             </div>
 
             <div>
@@ -1186,23 +1204,6 @@ export default function App() {
               <p className="text-[10px] text-gray-400 mt-1">같은 나염의 사진 여러 장을 <b>한 번에</b> → 한 부분으로 묶여 분석. 크기 참고 사진도 같이 넣으면 크기 자동 산정.</p>
             </div>
           </div>
-
-          {!productImageBack && (
-            <div className="mt-3">
-              <label className="text-[11px] font-bold uppercase tracking-wider mb-2 block">뒷면 디테일 이미지 <span className="text-gray-400 font-normal normal-case">(선택)</span></label>
-              <div className="flex items-start gap-3">
-                <div className="w-32 shrink-0">
-                  <ImageDropZone
-                    value={backDetailImage}
-                    onChange={setBackDetailImage}
-                    label="뒷면 디테일 업로드"
-                    icon={LucideUploadCloud}
-                  />
-                </div>
-                <p className="text-[10px] text-gray-400 mt-1 max-w-sm">뒷면 누끼가 없을 때, 이 디테일 이미지(요크·라벨·봉제·뒷판 그래픽 등)를 뒷면 유추 결과에 반영합니다.</p>
-              </div>
-            </div>
-          )}
 
           <h2 className="text-[11px] font-bold uppercase tracking-widest text-gray-400 mb-4 mt-6 pt-3 border-t border-gray-200">2. 분석 / 배치</h2>
 
