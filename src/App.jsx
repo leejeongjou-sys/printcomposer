@@ -7,6 +7,7 @@ import {
   LucideFileText, LucideArrowUp, LucideArrowDown
 } from 'lucide-react';
 import html2canvas from 'html2canvas';
+import { removeBackground } from '@imgly/background-removal';
 
 // ==================== CONSTANTS ====================
 const PRINT_TYPES = [
@@ -85,7 +86,7 @@ const VIEWS = [
   },
 ];
 
-const MODEL_ID = 'gemini-3.1-flash-image-preview';
+const MODEL_ID = 'gemini-3.1-flash-image';
 
 // 나염 부분 기본 배치값
 const DEFAULT_PLACEMENT = { side: 'front', offsetY: 'center', offsetX: 'center', widthPct: 25 };
@@ -417,6 +418,129 @@ ${typeInfo ? `\n프린트 종류: ${typeInfo.label} — 시각 특성: ${typeInf
   throw new Error(txtPart || '디테일 이미지 생성 실패');
 };
 
+// ==================== LOCAL COMPOSITE (실사진 위 로컬 합성) ====================
+const loadImage = (src) => new Promise((resolve, reject) => {
+  const im = new Image();
+  im.onload = () => resolve(im);
+  im.onerror = reject;
+  im.src = src;
+});
+
+// 프린트 사진에서 원단(코너 색) 키잉 → 프린트만 알파로 남긴 캔버스
+const keyPrintFromFabric = async (dataUrl, opts = {}) => {
+  const { t0 = 45, t1 = 100 } = opts;
+  const img = await loadImage(dataUrl);
+  const w = img.naturalWidth, h = img.naturalHeight;
+  const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+  const ctx = cv.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(img, 0, 0);
+  const id = ctx.getImageData(0, 0, w, h); const d = id.data;
+  // 코너 패치 평균 = 원단색
+  let rR = 0, rG = 0, rB = 0, cnt = 0;
+  const patch = Math.max(4, Math.round(Math.min(w, h) * 0.06));
+  for (const [cx, cy] of [[0, 0], [w - 1, 0], [0, h - 1], [w - 1, h - 1]]) {
+    for (let yy = 0; yy < patch; yy++) for (let xx = 0; xx < patch; xx++) {
+      const px = Math.min(w - 1, Math.max(0, cx + (cx === 0 ? xx : -xx)));
+      const py = Math.min(h - 1, Math.max(0, cy + (cy === 0 ? yy : -yy)));
+      const i = (py * w + px) * 4; rR += d[i]; rG += d[i + 1]; rB += d[i + 2]; cnt++;
+    }
+  }
+  rR /= cnt; rG /= cnt; rB /= cnt;
+  // 원단색과의 거리로 알파 (가까우면 투명)
+  for (let p = 0; p < w * h; p++) {
+    const i = p * 4;
+    const dr = d[i] - rR, dg = d[i + 1] - rG, db = d[i + 2] - rB;
+    const dist = Math.sqrt(dr * dr + dg * dg + db * db);
+    d[i + 3] = dist <= t0 ? 0 : dist >= t1 ? 255 : Math.round(255 * (dist - t0) / (t1 - t0));
+  }
+  ctx.putImageData(id, 0, 0);
+  return { canvas: cv, w, h };
+};
+
+// @imgly 세그멘테이션 → 옷 알파 마스크 + 바운딩박스
+const garmentMask = async (dataUrl) => {
+  const blob = await removeBackground(dataUrl);
+  const url = URL.createObjectURL(blob);
+  try {
+    const img = await loadImage(url);
+    const w = img.naturalWidth, h = img.naturalHeight;
+    const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+    const ctx = cv.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(img, 0, 0);
+    const d = ctx.getImageData(0, 0, w, h).data;
+    let minX = w, minY = h, maxX = 0, maxY = 0, found = false;
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      if (d[(y * w + x) * 4 + 3] > 40) { found = true; if (x < minX) minX = x; if (x > maxX) maxX = x; if (y < minY) minY = y; if (y > maxY) maxY = y; }
+    }
+    return { maskCanvas: cv, w, h, bbox: found ? { x: minX, y: minY, w: maxX - minX, h: maxY - minY } : { x: 0, y: 0, w, h } };
+  } finally { URL.revokeObjectURL(url); }
+};
+
+// 실사진 위에 프린트 로컬 합성 (원단 100% 진짜, 프린트만 얹고 원단 음영 통과)
+const OFFSET_FRAC_X = { left: 0.30, center: 0.5, right: 0.70 };
+const OFFSET_FRAC_Y = { top: 0.26, center: 0.5, bottom: 0.72 };
+const localComposeView = async ({ productDataUrl, items }) => {
+  const base = await loadImage(productDataUrl);
+  const W = base.naturalWidth, H = base.naturalHeight;
+  const { maskCanvas, bbox } = await garmentMask(productDataUrl);
+
+  // 옷만 남긴 캔버스 (배경 투명)
+  const garment = document.createElement('canvas'); garment.width = W; garment.height = H;
+  const gctx = garment.getContext('2d', { willReadFrequently: true });
+  gctx.drawImage(base, 0, 0);
+  gctx.globalCompositeOperation = 'destination-in';
+  gctx.drawImage(maskCanvas, 0, 0, W, H);
+  gctx.globalCompositeOperation = 'source-over';
+  const gData = gctx.getImageData(0, 0, W, H).data;
+  const lum = (i) => 0.299 * gData[i] + 0.587 * gData[i + 1] + 0.114 * gData[i + 2];
+
+  for (const item of items) {
+    const pl = item.placement;
+    const { canvas: printCv } = await keyPrintFromFabric(item.printImages[0]);
+    const targetW = Math.max(1, Math.round(bbox.w * (pl.widthPct / 100)));
+    const scale = targetW / printCv.width;
+    const targetH = Math.max(1, Math.round(printCv.height * scale));
+    const cx = bbox.x + bbox.w * (OFFSET_FRAC_X[pl.offsetX] ?? 0.5);
+    const cy = bbox.y + bbox.h * (OFFSET_FRAC_Y[pl.offsetY] ?? 0.5);
+    const dx = Math.round(cx - targetW / 2), dy = Math.round(cy - targetH / 2);
+
+    const layer = document.createElement('canvas'); layer.width = W; layer.height = H;
+    const lctx = layer.getContext('2d', { willReadFrequently: true });
+    lctx.imageSmoothingQuality = 'high';
+    lctx.drawImage(printCv, dx, dy, targetW, targetH);
+    const lId = lctx.getImageData(0, 0, W, H); const ld = lId.data;
+
+    // 프린트 영역 내 옷 평균 밝기
+    let sum = 0, n = 0;
+    for (let y = Math.max(0, dy); y < Math.min(H, dy + targetH); y++) {
+      for (let x = Math.max(0, dx); x < Math.min(W, dx + targetW); x++) {
+        const i = (y * W + x) * 4; if (gData[i + 3] > 40) { sum += lum(i); n++; }
+      }
+    }
+    const avg = n ? sum / n : 200;
+
+    // 원단 음영을 프린트에 곱연산 + 옷 마스크 밖은 제거
+    for (let p = 0; p < W * H; p++) {
+      const i = p * 4;
+      if (ld[i + 3] === 0) continue;
+      if (gData[i + 3] <= 40) { ld[i + 3] = 0; continue; }
+      let f = lum(i) / (avg || 200);
+      if (f < 0.6) f = 0.6; else if (f > 1.25) f = 1.25;
+      ld[i] = Math.min(255, ld[i] * f);
+      ld[i + 1] = Math.min(255, ld[i + 1] * f);
+      ld[i + 2] = Math.min(255, ld[i + 2] * f);
+    }
+    lctx.putImageData(lId, 0, 0);
+    gctx.drawImage(layer, 0, 0);
+  }
+
+  const out = document.createElement('canvas'); out.width = W; out.height = H;
+  const octx = out.getContext('2d');
+  octx.fillStyle = '#ffffff'; octx.fillRect(0, 0, W, H);
+  octx.drawImage(garment, 0, 0);
+  return out.toDataURL('image/jpeg', 0.95);
+};
+
 // ==================== UI HELPERS ====================
 const ImageDropZone = ({ value, onChange, onMultiple, label, icon: Icon, height = 'aspect-square', multiple = false }) => {
   const inputRef = useRef(null);
@@ -666,6 +790,7 @@ export default function App() {
   const [composeCount, setComposeCount] = useState(0);
   const isComposing = composeCount > 0;
   const [extraPrompt, setExtraPrompt] = useState('');
+  const [composeMode, setComposeMode] = useState('local'); // 'local'=실사진 위 로컬 합성, 'ai'=Gemini 재생성
   const [showDetailPage, setShowDetailPage] = useState(false);
   const [detailMeta, setDetailMeta] = useState(DETAIL_PAGE_DEFAULTS);
   const [detailShots, setDetailShots] = useState([]); // [{ id, src }] 동적 슬롯
@@ -800,18 +925,20 @@ export default function App() {
   // ---------- compose ----------
   // 공통 검증
   const validateCompose = () => {
-    if (!apiKey) { showNotification('API Key를 먼저 설정하세요', 'error'); return false; }
+    if (composeMode === 'ai' && !apiKey) { showNotification('AI 모드는 API Key가 필요합니다', 'error'); return false; }
     if (!productImage) { showNotification('제품컷을 업로드하세요', 'error'); return false; }
     if (prints.length === 0) { showNotification('나염 부분을 1개 이상 추가하세요', 'error'); return false; }
-    if (prints.some(p => p.analyzing)) { showNotification('아직 분석 중인 나염 부분이 있습니다', 'error'); return false; }
-    if (!prints.some(p => p.analysis)) { showNotification('분석 완료된 나염 부분이 없습니다', 'error'); return false; }
+    if (composeMode === 'ai') {
+      if (prints.some(p => p.analyzing)) { showNotification('아직 분석 중인 나염 부분이 있습니다', 'error'); return false; }
+      if (!prints.some(p => p.analysis)) { showNotification('분석 완료된 나염 부분이 없습니다', 'error'); return false; }
+    }
     return true;
   };
 
   // 해당 뷰(정면/후면)에 합성할 나염 부분이 있는지 (소매는 양쪽 뷰 모두 포함)
   const hasViewItems = (viewKey) => {
     const view = VIEWS.find(v => v.key === viewKey);
-    return !!view && prints.some(p => p.analysis && p.placement && view.sides.includes(p.placement.side));
+    return !!view && prints.some(p => (composeMode === 'local' || p.analysis) && p.placement && view.sides.includes(p.placement.side));
   };
 
   // 내부: view 1개 합성 (isComposing 카운트 관리 X)
@@ -819,8 +946,8 @@ export default function App() {
     const view = VIEWS.find(v => v.key === viewKey);
     if (!view) return;
     const items = prints
-      .filter(p => p.analysis && p.placement && view.sides.includes(p.placement.side))
-      .map(p => ({ placement: p.placement, printImages: p.images, printType: p.analysis.type }));
+      .filter(p => (composeMode === 'local' || p.analysis) && p.placement && view.sides.includes(p.placement.side))
+      .map(p => ({ placement: p.placement, printImages: p.images, printType: p.analysis?.type }));
     if (items.length === 0) return null;
 
     // 후면: 뒷면 누끼가 있으면 직접 사용, 없으면 앞면 기반 유추(+뒷면 디테일 이미지 반영)
@@ -837,18 +964,27 @@ export default function App() {
       }
     }
 
+    // 로컬 모드는 해당 뷰의 실사진이 있어야 합성 가능 (후면은 뒷면 누끼 필요)
+    if (composeMode === 'local' && viewKey === 'back_view' && !productImageBack) return null;
+
     setResults(r => ({ ...r, [view.key]: { status: 'pending' } }));
     try {
-      const dataUrl = await composeView({
-        apiKey,
-        productImageDataUrl: productImg,
-        items,
-        viewLabel: view.label,
-        viewInstruction,
-        backDetailImage: backDetailImg,
-        extraPrompt,
-        aspectRatio: '1:1',
-      });
+      let dataUrl;
+      if (composeMode === 'local' && productImg) {
+        // 실사진 위 로컬 합성 (원단 진짜 보존)
+        dataUrl = await localComposeView({ productDataUrl: productImg, items });
+      } else {
+        dataUrl = await composeView({
+          apiKey,
+          productImageDataUrl: productImg,
+          items,
+          viewLabel: view.label,
+          viewInstruction,
+          backDetailImage: backDetailImg,
+          extraPrompt,
+          aspectRatio: '1:1',
+        });
+      }
       setResults(r => ({ ...r, [view.key]: { status: 'done', dataUrl } }));
       return 'done';
     } catch (e) {
@@ -862,7 +998,7 @@ export default function App() {
     if (!validateCompose()) return;
     const view = VIEWS.find(v => v.key === viewKey);
     if (!view) return;
-    const hasItems = prints.some(p => p.analysis && p.placement && view.sides.includes(p.placement.side));
+    const hasItems = prints.some(p => (composeMode === 'local' || p.analysis) && p.placement && view.sides.includes(p.placement.side));
     if (!hasItems) {
       showNotification(`${view.label}에 배치된 나염 부분이 없습니다`, 'error');
       return;
@@ -1397,7 +1533,13 @@ export default function App() {
         {/* ============ Right: Results ============ */}
         <section className="col-span-5 overflow-y-auto p-5 bg-gray-50">
           <div className="flex items-center justify-between mb-4 gap-2 flex-wrap">
-            <h2 className="text-[11px] font-bold uppercase tracking-widest text-gray-400">3. 결과</h2>
+            <div className="flex items-center gap-2">
+              <h2 className="text-[11px] font-bold uppercase tracking-widest text-gray-400">3. 결과</h2>
+              <div className="flex border border-gray-300 text-[10px] font-bold uppercase tracking-wider overflow-hidden" title="로컬=실사진 위 합성(원단 진짜) · AI=Gemini 재생성">
+                <button onClick={() => setComposeMode('local')} className={`px-2 py-1 ${composeMode === 'local' ? 'bg-black text-white' : 'bg-white text-gray-500 hover:bg-gray-100'}`}>로컬</button>
+                <button onClick={() => setComposeMode('ai')} className={`px-2 py-1 border-l border-gray-300 ${composeMode === 'ai' ? 'bg-black text-white' : 'bg-white text-gray-500 hover:bg-gray-100'}`}>AI</button>
+              </div>
+            </div>
             {Object.values(results).some(r => r.status === 'done') && (
               <div className="flex gap-1.5">
                 <button onClick={openDetailPage}
